@@ -1,0 +1,14 @@
+[project]
+name = "wf"
+version = "0.1.0"
+description = "Next-day wildfire spread: staged architecture search on the cached 23-channel patches"
+requires-python = ">=3.10"
+dependencies = [
+    "numpy",
+    "scipy",
+    "torch",
+    "scikit-learn",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
