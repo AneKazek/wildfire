@@ -205,6 +205,35 @@ On the rebuilt cache, two cheap post-processing levers were tested and rejected:
   threshold (vs 0.461 undilated) and 2 px is worse. The under-prediction is not a
   boundary-offset problem that a fixed dilation can fix; it is missing pixels in the
   middle of large fires.
+* **Blob decoders with an estimated area** (`wf.decode`): replacing the mask by a disk of
+  the probability mass at the mask centroid scores 0.425, below the plain threshold at
+  0.459, for every scale tried (0.9–1.2) and for a mask-below-size hybrid. The
+  probability mass is a poor size estimate (log-log correlation 0.56 with the GT area),
+  and an eval-side 3-feature log-log fit gets 0.4496 held out. A shape prior needs a
+  trained size head, not a calibrated mask statistic.
+* **Soft targets** (`td_gate3_soft8`): 0.4273 vs 0.4590. AP (0.5885 vs 0.5766),
+  `hard_dice` (0.1845 vs 0.1269) and boundary F1 (0.8444 vs 0.8362) all improve — the
+  fuzzy edge is a real boundary effect — but macro Dice drops, because 64% of the
+  patches are smaller than 10 px and there a widened blob costs more than the softer
+  edge buys.
+
+### Where the Dice actually goes (`wf.probe`, td_gate3_s1, thr 0.65, base 0.459)
+
+| decode | macro Dice |
+|---|---|
+| `p > thr` | 0.4590 |
+| top-k of `p`, own probability mass | 0.4555 |
+| top-k of `p`, GT area | **0.5538** |
+| GT-area disk at the predicted centroid | 0.5030 |
+| predicted-area disk at the predicted centroid | 0.4328 |
+| largest component / 3×3 opening | 0.4562 / 0.0512 |
+
+Location is not the problem: centroid error is 1.24 px (median) / 10.97 (p90), and the
+probability mass is within 4% of the GT area *in total*. The problem is that the mass is
+spread over the wrong pixels, and that no mask statistic predicts the per-patch area.
+With a noisy oracle area (`area × lognormal(σ)`), top-k scores 0.552 (σ=0.15), 0.542
+(0.30), 0.530 (0.45), 0.513 (0.60) and 0.479 (0.90) — so an area head only has to be
+within ~40% to be worth more than a point of Dice. Hence the per-patch area head.
 
 ## Alternative datasets (reviewed, not used)
 
