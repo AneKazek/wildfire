@@ -1,0 +1,58 @@
+%% TD orthogonal-transform trunk (the custom architecture, `trunk: "td"`, candidate td_gate3).
+%% Renders on GitHub / mermaid.live. Shapes are for one 64x64 patch, batch B.
+%%{init: {"flowchart": {"nodeSpacing": 35, "rankSpacing": 45}}}%%
+flowchart TB
+  X["input x<br/>(B, 23, 64, 64)"] --> N["normalise<br/>(x - mean) / std"]
+  N --> BR
+
+  subgraph BR["3 parallel encoders · BranchEnc(cin=23, width=16, depth=1)"]
+    direction LR
+    H["ht · Walsh–Hadamard"]
+    D["dct · DCT-II"]
+    C["conv · no transform"]
+  end
+
+  BR --> FY["feature pyramid per branch<br/>f0 16@64 · f1 32@32 · f2 64@16"]
+  FY --> FU{"Fuse at every scale<br/>k = 3 branches"}
+
+  FU --> G["gate · per-pixel softmax<br/>out = Σ a_i · proj_i(f_i)"]
+  FU --> S2["sum · per-branch scalar<br/>out = Σ w_i · f_i"]
+
+  G --> U2
+  S2 -.-> U2
+
+  subgraph DEC["shared decoder and head"]
+    direction TB
+    U2["up 64→32<br/>bilinear 16 → 32"] --> M1["concat f1 (32)<br/>cna 64→32"]
+    M1 --> U1["up 32→16<br/>bilinear 32 → 64"] --> M0["concat f0 (16)<br/>cna 32→16"]
+  end
+
+  DEC --> HD["Head · cna 16→16 + 1×1"] --> SG["sigmoid<br/>P(fire) · (B, 1, 64, 64)"]
+
+  %% ---- inner blocks, anchored next to the stage they belong to ----
+
+  BR ~~~ SPEC
+  subgraph SPEC["SpecBlock · one per stage (repeated depth times)"]
+    direction TB
+    BODY["cna(c,c) ×2<br/>3×3 conv · BN · GELU"] --> K{"branch kind"}
+    K -->|"ht / dct"| SP["Spectral<br/>z = B x Bᵀ<br/>z = z · gain<br/>z = sign(z)·ReLU(|z| − softplus(thr))<br/>out = Bᵀ z B"]
+    K -->|"conv"| ID["identity"]
+    SP --> R["residual: x + out"]
+    ID --> R
+  end
+
+  FU ~~~ GATE
+  subgraph GATE["Fuse detail (gate)"]
+    direction TB
+    P1["per branch: conv1×1 proj"] --> ST["stack k feature maps"]
+    CA["cat k feature maps"] --> G2["conv3×3 c → GELU → conv1×1 k"] --> SM["softmax over k"]
+    ST --> OUT["weighted sum<br/>(B, c, H, W)"]
+    SM --> OUT
+  end
+
+  classDef io fill:#eef6ff,stroke:#4a7fb5,color:#123
+  classDef op fill:#f4ecff,stroke:#7a4fb5,color:#123
+  classDef alt fill:#f6f6f6,stroke:#888,color:#333,stroke-dasharray: 4 3
+  class X,N,SG io
+  class H,D,C,FY,FU,G,U2,M1,U1,M0,HD,BODY,SP,G2,SM,OUT op
+  class S2,ID alt

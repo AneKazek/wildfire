@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -265,6 +266,127 @@ class DualUNet(nn.Module):
         return self.mix[1](torch.cat([h, skips[0]], 1))
 
 
+"""Orthogonal-transform trunks (TD-FusionUNet, ICIP 2026).
+
+Idea borrowed from Luo et al.: a U-Net whose blocks mix globally through a fixed
+orthogonal transform (Walsh-Hadamard / DCT) with a learned per-coefficient gain
+and soft-threshold. That gives a 64x64 patch long-range mixing for the price of
+two small matmuls per channel, instead of attention or a deep dilated stack.
+"""
+
+_BASIS: dict[tuple[str, int], torch.Tensor] = {}
+
+
+def basis(kind: str, n: int) -> torch.Tensor:
+    """Orthonormal n x n transform matrix (Walsh-Hadamard or DCT-II)."""
+    key = (kind, n)
+    if key not in _BASIS:
+        if kind == "ht":
+            h = np.ones((1, 1), np.float32)
+            while h.shape[0] < n:
+                h = np.block([[h, h], [h, -h]])
+            h /= np.sqrt(n)
+        else:
+            k = np.arange(n)[:, None]
+            i = np.arange(n)[None, :]
+            h = np.cos(np.pi * (i + 0.5) * k / n) * np.sqrt(2.0 / n)
+            h[0] = np.sqrt(1.0 / n)
+        _BASIS[key] = torch.tensor(h, dtype=torch.float32)
+    return _BASIS[key]
+
+
+class Spectral(nn.Module):
+    """Transform, per-coefficient gain, soft-threshold, inverse transform."""
+
+    def __init__(self, c: int, size: int, kind: str = "ht"):
+        super().__init__()
+        self.register_buffer("B", basis(kind, size))
+        self.gain = nn.Parameter(torch.ones(1, c, size, size))
+        self.thr = nn.Parameter(torch.full((1, c, size, size), -5.0))  # softplus(-5) ~ 0.007
+
+    def forward(self, x):
+        z = self.B @ x @ self.B.t()
+        z = z * self.gain
+        z = torch.sign(z) * F.relu(z.abs() - F.softplus(self.thr))
+        return self.B.t() @ z @ self.B
+
+
+class SpecBlock(nn.Module):
+    """Conv block + spectral perceptron, residual. `conv` kind = plain control."""
+
+    def __init__(self, c: int, size: int, kind: str):
+        super().__init__()
+        self.body = nn.Sequential(cna(c, c), cna(c, c))
+        self.spec = None if kind == "conv" else Spectral(c, size, kind)
+
+    def forward(self, x):
+        y = self.body(x)
+        return x + (y if self.spec is None else self.spec(y))
+
+
+class BranchEnc(nn.Module):
+    def __init__(self, cin: int, width: int, depth: int, kind: str, sizes):
+        super().__init__()
+        self.stem = cna(cin, width)
+        ws = [width, 2 * width, 4 * width]
+        self.stages = nn.ModuleList([
+            nn.Sequential(*[SpecBlock(ws[i], sizes[i], kind) for _ in range(depth)]) for i in range(3)])
+        self.down = nn.ModuleList([cna(ws[i], ws[i + 1], 3, stride=2) for i in range(2)])
+
+    def forward(self, x):
+        h, out = self.stem(x), []
+        for i, st in enumerate(self.stages):
+            h = st(h)
+            out.append(h)
+            if i < 2:
+                h = self.down[i](h)
+        return out
+
+
+class Fuse(nn.Module):
+    """Merge k branch feature maps: per-branch scalar sum, or a learned pixel gate."""
+
+    def __init__(self, c: int, k: int, mode: str = "gate"):
+        super().__init__()
+        self.mode = mode
+        if mode == "sum":
+            self.w = nn.Parameter(torch.ones(k))
+        else:
+            self.proj = nn.ModuleList([nn.Conv2d(c, c, 1) for _ in range(k)])
+            self.g = nn.Sequential(nn.Conv2d(c * k, c, 3, padding=1), nn.GELU(), nn.Conv2d(c, k, 1))
+
+    def forward(self, fs):
+        if self.mode == "sum":
+            return sum(w * f for w, f in zip(self.w, fs))
+        z = torch.stack([p(f) for p, f in zip(self.proj, fs)], 1)
+        a = torch.softmax(self.g(torch.cat(fs, 1)), 1).unsqueeze(2)
+        return (z * a).sum(1)
+
+
+class TDUNet(nn.Module):
+    """k parallel transform encoders, shared decoder, fused at every scale."""
+
+    def __init__(self, cin: int, width: int = 16, branches=("ht", "dct"), depth: int = 1,
+                 fusion: str = "gate", sizes=(64, 32, 16)):
+        super().__init__()
+        w, k = width, len(branches)
+        self.enc = nn.ModuleList([BranchEnc(cin, w, depth, b, sizes) for b in branches])
+        self.fuse = nn.ModuleList([Fuse(w, k, fusion), Fuse(2 * w, k, fusion), Fuse(4 * w, k, fusion)])
+        self.up = nn.ModuleList([cna(4 * w, 2 * w), cna(2 * w, w)])
+        self.mix = nn.ModuleList([cna(4 * w, 2 * w), cna(2 * w, w)])
+        self.out_c = w
+
+    def forward(self, x):
+        fs = [e(x) for e in self.enc]
+        h = self.fuse[2]([f[2] for f in fs])
+        h = self.up[0](h)
+        h = F.interpolate(h, size=fs[0][1].shape[-2:], mode="bilinear", align_corners=False)
+        h = self.mix[0](torch.cat([h, self.fuse[1]([f[1] for f in fs])], 1))
+        h = self.up[1](h)
+        h = F.interpolate(h, size=fs[0][0].shape[-2:], mode="bilinear", align_corners=False)
+        return self.mix[1](torch.cat([h, self.fuse[0]([f[0] for f in fs])], 1))
+
+
 class Head(nn.Module):
     def __init__(self, c: int, out: int = 1):
         super().__init__()
@@ -297,6 +419,10 @@ class Net(nn.Module):
         elif trunk == "dual":
             self.trunk = DualUNet(cin, cfg.pop("widths", (32, 64, 128)), cfg.pop("depths", (2, 2, 2)),
                                   cfg.pop("drop_path", 0.0))
+        elif trunk == "td":
+            self.trunk = TDUNet(cin, cfg.pop("width", 16), tuple(cfg.pop("branches", ("ht", "dct"))),
+                                cfg.pop("depth", 1), cfg.pop("fusion", "gate"),
+                                tuple(cfg.pop("sizes", (64, 32, 16))))
         else:
             raise ValueError(f"unknown trunk {trunk}")
         if cfg:

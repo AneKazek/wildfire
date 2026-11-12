@@ -70,7 +70,8 @@ def average_precision(prob: np.ndarray, tgt: np.ndarray, valid: np.ndarray, max_
 
 def evaluate(prob: np.ndarray, tgt: np.ndarray, valid: np.ndarray, thr: float = 0.5,
              full: bool = True) -> dict:
-    pred = (prob > thr) & valid
+    thr = np.asarray(thr, np.float32)
+    pred = (prob > (thr[:, None, None] if thr.ndim else thr)) & valid
     tg = tgt & valid
     d = dice_per_sample(pred, tg)
     inter = np.logical_and(pred, tg).sum()

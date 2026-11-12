@@ -10,11 +10,9 @@ import numpy as np
 import torch
 
 from .candidates import make_cfg
-from .data import PAIRS, jac, split_indices
-from .data import FireDataset
+from .data import PAIRS, FireDataset, jac, split_indices
 from .metrics import evaluate, sweep
-from .models import build_model
-from .train import _loader, norm_stats, run
+from .train import _loader, build, norm_stats, run
 
 
 def _geo(x: torch.Tensor, k: int) -> torch.Tensor:
@@ -97,21 +95,22 @@ def main() -> None:
         run(cfg, run_name, args.runs)
 
     ckpt = torch.load(out / "best.pt", map_location=dev)
-    model = build_model(cfg["model"], *norm_stats(root)).to(dev).to(memory_format=torch.channels_last)
+    model, prep, drop = build(cfg, root)
+    model = model.to(dev).to(memory_format=torch.channels_last)
     model.load_state_dict(ckpt["model"], strict=False)
 
-    ev_ds = FireDataset(root, "eval", None, aux=False)
+    ev_ds = FireDataset(root, "eval", None, aux=False, prep=prep, drop=drop)
     tg, va = _targets(ev_ds)
     ld = _loader(ev_ds, 512, False, 4)
     prob = predict_tta(model, ld, dev, dtype, args.tta)
     thr, rows = sweep(prob, tg, va)
     ev = evaluate(prob, tg, va, thr, full=True)
     res = {"name": args.name, "run": run_name, "seed": args.seed, "stage": args.stage, "tta": args.tta,
-           "thr": thr, "sweep": rows, "eval": ev}
+           "thr": thr, "sweep": rows, "eval": ev, "prep": prep, "drop": drop}
     np.save(out / "eval_prob.npy", prob)
 
     if args.test:
-        te_ds = FireDataset(root, "test", None, aux=False)
+        te_ds = FireDataset(root, "test", None, aux=False, prep=prep, drop=drop)
         ttg, tva = _targets(te_ds)
         tprob = predict_tta(model, _loader(te_ds, 512, False, 4), dev, dtype, args.tta)
         res["test"] = evaluate(tprob, ttg, tva, thr, full=True)

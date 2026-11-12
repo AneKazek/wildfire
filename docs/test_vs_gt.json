@@ -1,107 +1,47 @@
 {
  "split": "test",
- "thr": 0.45,
+ "thr": 0.6,
  "tta": 4,
  "runs": [
   "smp_unetpp_r18_s3",
-  "smp_unet_mitb0_s3",
-  "smp_unet_mitb0_s3_seed1",
-  "smp_unet_mitb0_s3_seed2",
-  "smp_unet_r34_s3"
+  "td_gate3_s3"
  ],
  "weights": [
-  0.25,
-  0.2,
-  0.2,
-  0.2,
-  0.15
+  0.6,
+  0.4
  ],
  "metrics": {
-  "macro_dice": 0.48233887758747507,
-  "micro_dice": 0.4352503294639737,
-  "iou": 0.278159719512753,
-  "precision": 0.4082579676947988,
-  "recall": 0.4660646336405114,
-  "hard_dice": 0.26202979942048665,
-  "boundary_f1": 0.8412631979366175,
-  "ap": 0.7773665750821381
+  "macro_dice": 0.48258524431024097,
+  "micro_dice": 0.4324699086987564,
+  "iou": 0.2758925720779963,
+  "precision": 0.4382438606776286,
+  "recall": 0.4268461242154397,
+  "hard_dice": 0.13637792792984815,
+  "boundary_f1": 0.8425674300746433,
+  "ap": 0.7741348449718247
  },
  "per_sample": {
-  "mean": 0.48233887758747507,
+  "mean": 0.48258524431024097,
   "median": 0.46153846153846156,
-  "p10": 0.25,
+  "p10": 0.24242424242424243,
   "p90": 0.75,
-  "share_ge_0.5": 0.47212641373225317,
+  "share_ge_0.5": 0.47375274680556684,
   "share_zero": 0.0,
   "share_pred_empty_gt_not": 0.0
  },
  "pixels": {
-  "tp": 103375,
-  "fp": 149835,
-  "fn": 118429,
-  "recall": 0.4660646336405114,
-  "precision": 0.4082579676947988
+  "tp": 94190,
+  "fp": 120736,
+  "fn": 126475,
+  "recall": 0.4268461242154397,
+  "precision": 0.4382438606776286
  },
  "cases": [
-  {
-   "tag": "worst",
-   "index": 9744,
-   "dice": 0.03007518796992481,
-   "gt_px": 124,
-   "pred_px": 9,
-   "tp": 2,
-   "fp": 7,
-   "fn": 122
-  },
-  {
-   "tag": "2nd worst",
-   "index": 7440,
-   "dice": 0.03389830508474576,
-   "gt_px": 48,
-   "pred_px": 11,
-   "tp": 1,
-   "fp": 10,
-   "fn": 47
-  },
-  {
-   "tag": "median",
-   "index": 4910,
-   "dice": 0.46153846153846156,
-   "gt_px": 6,
-   "pred_px": 7,
-   "tp": 3,
-   "fp": 4,
-   "fn": 3
-  },
-  {
-   "tag": "best",
-   "index": 9678,
-   "dice": 1.0,
-   "gt_px": 3,
-   "pred_px": 3,
-   "tp": 3,
-   "fp": 0,
-   "fn": 0
-  },
-  {
-   "tag": "largest GT",
-   "index": 4781,
-   "dice": 0.3282442748091603,
-   "gt_px": 521,
-   "pred_px": 265,
-   "tp": 129,
-   "fp": 136,
-   "fn": 392
-  },
-  {
-   "tag": "most false fire",
-   "index": 4858,
-   "dice": 0.24912689173457508,
-   "gt_px": 121,
-   "pred_px": 738,
-   "tp": 107,
-   "fp": 631,
-   "fn": 14
-  }
+  {"tag": "worst", "index": 7440, "dice": 0.03278688524590164, "gt_px": 48, "pred_px": 13, "tp": 1, "fp": 12, "fn": 47},
+  {"tag": "2nd worst", "index": 6301, "dice": 0.037037037037037035, "gt_px": 52, "pred_px": 2, "tp": 1, "fp": 1, "fn": 51},
+  {"tag": "median", "index": 9399, "dice": 0.46153846153846156, "gt_px": 6, "pred_px": 7, "tp": 3, "fp": 4, "fn": 3},
+  {"tag": "best", "index": 10888, "dice": 1.0, "gt_px": 1, "pred_px": 1, "tp": 1, "fp": 0, "fn": 0},
+  {"tag": "largest GT", "index": 4781, "dice": 0.26626323751891073, "gt_px": 521, "pred_px": 140, "tp": 88, "fp": 52, "fn": 433},
+  {"tag": "most false fire", "index": 4846, "dice": 0.2434584755403868, "gt_px": 118, "pred_px": 761, "tp": 107, "fp": 654, "fn": 11}
  ]
 }

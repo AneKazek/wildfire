@@ -23,8 +23,8 @@ from .final import _targets, predict_tta
 from .metrics import dice_per_sample, evaluate
 from .train import _loader
 
-RUNS = "smp_unetpp_r18_s3,smp_unet_mitb0_s3,smp_unet_mitb0_s3_seed1,smp_unet_mitb0_s3_seed2,smp_unet_r34_s3"
-WEIGHTS = "0.25,0.2,0.2,0.2,0.15"
+RUNS = "smp_unetpp_r18_s3,td_gate3_s3"
+WEIGHTS = "0.6,0.4"
 
 
 def _rgb(x: np.ndarray) -> np.ndarray:
@@ -53,7 +53,7 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--runs", default=RUNS)
     ap.add_argument("--weights", default=WEIGHTS)
-    ap.add_argument("--thr", type=float, default=0.45)
+    ap.add_argument("--thr", type=float, default=0.60)
     ap.add_argument("--tta", type=int, default=4)
     ap.add_argument("--split", default="test")
     ap.add_argument("--out", default="results/test_vs_gt.png")
@@ -66,7 +66,10 @@ def main() -> None:
     w = np.array([float(v) for v in args.weights.split(",")])
     assert len(w) == len(names)
 
-    ds = FireDataset(root, args.split, None, aux=False)
+    head = torch.load(Path("results/runs") / names[0] / "best.pt", map_location="cpu")["cfg"]["data"]
+    prep, drop = head.get("prep", "base"), head.get("drop", "")
+
+    ds = FireDataset(root, args.split, None, aux=False, prep=prep, drop=drop)
     tg, va = _targets(ds)
     ld = _loader(ds, 512, False, 4)
 
@@ -77,7 +80,7 @@ def main() -> None:
     else:
         probs = []
         for name in names:
-            model = _load_run(name, dev, root)
+            model, _, _ = _load_run(name, dev, root)
             probs.append(predict_tta(model, ld, dev, dtype, args.tta))
             del model
             torch.cuda.empty_cache()
@@ -151,7 +154,7 @@ def main() -> None:
             f"{tag}\ndice {dd:.3f}\nGT {int(gt[i].sum())}px · pred {int(pred[i].sum())}px", fontsize=8
         )
     fig.suptitle(
-        f"test split: 5-model blend, TTA-{args.tta}, thr {args.thr} — macro Dice {metrics['macro_dice']:.4f} "
+        f"test split: {len(names)}-model blend, TTA-{args.tta}, thr {args.thr} — macro Dice {metrics['macro_dice']:.4f} "
         f"(median {np.median(d):.3f}, {100 * (d >= 0.5).mean():.0f}% of patches >= 0.50)",
         fontsize=9,
     )

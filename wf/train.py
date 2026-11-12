@@ -17,6 +17,16 @@ from .data import CHANNELS, FireDataset, split_indices
 from .losses import make_loss
 from .metrics import evaluate, sweep
 from .models import build_model
+from .prep import norm_for
+
+
+def build(cfg: dict, root: str | Path = "data/processed"):
+    """Model + the data-preprocessing options it was trained with."""
+    d = cfg["data"]
+    prep, drop = d.get("prep", "base"), d.get("drop", "")
+    mean, std = norm_for(root, prep, drop)
+    model = build_model({**cfg["model"], "cin": len(mean)}, mean, std)
+    return model, prep, drop
 
 
 def norm_stats(root: str | Path, n: int = 20000, seed: int = 0) -> tuple[list[float], list[float]]:
@@ -24,7 +34,9 @@ def norm_stats(root: str | Path, n: int = 20000, seed: int = 0) -> tuple[list[fl
     if path.exists():
         d = json.loads(path.read_text())
         return d["mean"], d["std"]
-    x = np.load(Path(root) / "train" / "features.npy", mmap_mode="r")
+    from .data import cache
+
+    x = cache(root, "train")[0]
     idx = np.random.default_rng(seed).integers(0, len(x), min(n, len(x)))
     blocks = np.stack([np.asarray(x[i], dtype=np.float32) for i in idx])
     mean = blocks.mean(axis=(0, 2, 3)).tolist()
@@ -61,7 +73,8 @@ def _loader(ds, bs: int, shuffle: bool, workers: int) -> DataLoader:
     # Persistent workers: re-spawning 10 forks every epoch cost ~25 s per epoch,
     # which dominated short screening runs.
     return DataLoader(ds, batch_size=bs, shuffle=shuffle, num_workers=workers, pin_memory=False,
-                      drop_last=shuffle, persistent_workers=workers > 0, prefetch_factor=4)
+                      drop_last=shuffle, persistent_workers=workers > 0,
+                      prefetch_factor=4 if workers else None)
 
 
 @torch.no_grad()
@@ -93,8 +106,8 @@ def run(cfg: dict, run_name: str | None = None, out_dir: str | Path = "results/r
     dtype = torch.bfloat16 if t.get("amp", "bf16") in (True, "bf16") else torch.float16
     use_amp = dev.type == "cuda" and bool(t.get("amp", True))
 
-    mean, std = norm_stats(root)
-    model = build_model(m, mean, std).to(dev).to(memory_format=torch.channels_last)
+    model, prep, drop = build(cfg, root)
+    model = model.to(dev).to(memory_format=torch.channels_last)
     nparam = sum(p.numel() for p in model.parameters())
 
     train_idx = split_indices(root, "train", t.get("n_train"), seed=rng)
@@ -106,9 +119,11 @@ def run(cfg: dict, run_name: str | None = None, out_dir: str | Path = "results/r
     if in_mem is None:
         in_mem = len(train_idx) <= 30000
     tr_ds = FireDataset(root, "train", train_idx, augment=True, prev_dropout=d.get("prev_dropout", 0.2),
-                        seed=rng, aux=bool(wb or wg), in_memory=in_mem)
+                        seed=rng, aux=bool(wb or wg), in_memory=in_mem, prep=prep, drop=drop,
+                        pf_aug=d.get("pf_aug", ""), soft=float(d.get("soft", 0.0)))
     ev_idx = split_indices(root, "eval", t.get("eval_n"), seed=0)
-    ev_ds = FireDataset(root, "eval", ev_idx, augment=False, aux=False, in_memory=len(ev_idx) <= 30000)
+    ev_ds = FireDataset(root, "eval", ev_idx, augment=False, aux=False, in_memory=len(ev_idx) <= 30000,
+                        prep=prep, drop=drop)
     bs = int(t.get("batch_size", 256))
     tr_ld = _loader(tr_ds, bs, True, int(t.get("workers", 8)))
     ev_ld = _loader(ev_ds, 512, False, int(t.get("eval_workers", 4)))
@@ -206,7 +221,7 @@ def run(cfg: dict, run_name: str | None = None, out_dir: str | Path = "results/r
     ckpt = out / "best.pt"
     if ckpt.exists():
         model.load_state_dict(torch.load(ckpt, map_location=dev)["model"], strict=False)
-    full_ds = FireDataset(root, "eval", None, aux=False)
+    full_ds = FireDataset(root, "eval", None, aux=False, prep=prep, drop=drop)
     prob, tg, va = predict(model, _loader(full_ds, 512, False, 4), dev, dtype)
     thr, rows = sweep(prob, tg, va)
     full = evaluate(prob, tg, va, thr, full=True)

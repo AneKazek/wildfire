@@ -33,6 +33,17 @@ def smp_up(arch: str, encoder: str, up: int, **kw) -> dict:
     return {"model": {**smp(arch, encoder, **kw)["model"], "up": up}}
 
 
+def pv(prep: str, drop: str = "") -> dict:
+    """Same trunk as the winner, only the input preprocessing changes."""
+    return {**smp("UnetPlusPlus", "resnet18"),
+            "data": {"root": "data/processed", "prev_dropout": 0.2, "prep": prep, "drop": drop}}
+
+
+def td(**kw) -> dict:
+    """Orthogonal-transform trunk (TD-FusionUNet line)."""
+    return {"model": {"trunk": "td", **kw}}
+
+
 CANDIDATES: dict[str, dict] = {
     # --- encoder-decoder with pretrained backbones (the fast lane) ---
     "smp_unet_r18": smp("Unet", "resnet18"),
@@ -90,10 +101,47 @@ CANDIDATES: dict[str, dict] = {
     "smp_unet_r18_lovasz": {**smp("Unet", "resnet18"), "loss": {"name": "lovasz"}},
     "smp_unet_r18_drop4": {**smp("Unet", "resnet18"), "data": {"root": "data/processed", "prev_dropout": 0.4}},
     "smp_unet_r18_drop0": {**smp("Unet", "resnet18"), "data": {"root": "data/processed", "prev_dropout": 0.0}},
+
+    # --- preprocessing sweep: identical trunk, different input channels ---
+    "pp_lean": pv("base", "lean"),
+    "pp_ctx": pv("ctx"),
+    "pp_scar": pv("scar"),
+    "pp_wind": pv("wind"),
+    "pp_scarwind": pv("scarwind"),
+    "pp_all": pv("all"),
+    "pp_all_lean": pv("all", "lean"),
+    "pp_dist": pv("dist", "nodist"),
+
+    # --- orthogonal-transform trunks (TD-FusionUNet line) ---
+    "td_sum": td(branches=["ht", "dct"], fusion="sum", width=16),
+    "td_gate": td(branches=["ht", "dct"], fusion="gate", width=16),
+    "td_gate3": td(branches=["ht", "dct", "conv"], fusion="gate", width=16),
+    "td_gate_deep": td(branches=["ht", "dct"], fusion="gate", width=16, depth=2),
+    "td_gate_wide": td(branches=["ht", "dct"], fusion="gate", width=24),
+    "td_gate_mh": {**td(branches=["ht", "dct"], fusion="gate", width=16,
+                        heads=["main", "boundary", "growth"]),
+                   "loss": {"name": "bce_dice", "pos_weight": 5.0, "boundary_weight": 0.3, "growth_weight": 0.3}},
+    "td_gate_pf": {**td(branches=["ht", "dct"], fusion="gate", width=16),
+                   "data": {"root": "data/processed", "prev_dropout": 0.2, "pf_aug": "both"}},
+
+    # --- round 2: soft labels / scar-channel ablations / physics channels ---
+    "td_gate3_soft8": {**td(branches=["ht", "dct", "conv"], fusion="gate", width=16),
+                       "data": {"root": "data/processed", "prev_dropout": 0.2, "soft": 0.8}},
+    "td_gate3_soft15": {**td(branches=["ht", "dct", "conv"], fusion="gate", width=16),
+                        "data": {"root": "data/processed", "prev_dropout": 0.2, "soft": 1.5}},
+    "td_gate3_noscar": {**td(branches=["ht", "dct", "conv"], fusion="gate", width=16),
+                        "data": {"root": "data/processed", "prev_dropout": 0.2, "drop": "noscar"}},
+    "td_gate3_scarwind": {**td(branches=["ht", "dct", "conv"], fusion="gate", width=16),
+                          "data": {"root": "data/processed", "prev_dropout": 0.2, "prep": "scarwind"}},
+    "td_gate3_ftl": {**td(branches=["ht", "dct", "conv"], fusion="gate", width=16),
+                     "loss": {"name": "focal_tversky", "alpha": 0.4, "beta": 0.6, "gamma": 1.33}},
+    "td_gate3_pf": {**td(branches=["ht", "dct", "conv"], fusion="gate", width=16),
+                    "data": {"root": "data/processed", "prev_dropout": 0.2, "pf_aug": "both"}},
 }
 
 # Cheapest-first-ish, likely winners on top: the deadline may cut the tail.
 ORDER = [
+    "td_sum", "td_gate", "td_gate3", "td_gate_deep", "td_gate_wide", "td_gate_mh", "td_gate_pf",
     "smp_unet_r18", "smp_unet_r34", "smp_deeplab_r18", "smp_unetpp_r18", "smp_unet_mitb0",
     "dual32", "dual48", "smp_fpn_r18", "smp_manet_b0", "unet32_4l", "smp_unet_r50",
     "smp_unet_convnext_t", "smp_unetpp_r34", "smp_deeplab_r34", "dual32_deep", "unet48",
