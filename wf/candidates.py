@@ -137,6 +137,10 @@ CANDIDATES: dict[str, dict] = {
                      "loss": {"name": "focal_tversky", "alpha": 0.4, "beta": 0.6, "gamma": 1.33}},
     "td_gate3_pf": {**td(branches=["ht", "dct", "conv"], fusion="gate", width=16),
                     "data": {"root": "data/processed", "prev_dropout": 0.2, "pf_aug": "both"}},
+
+    # --- round 3: precision-weighted objective (FP costs more than FN) ---
+    "td_ptv": {**td(branches=["ht", "dct", "conv"], fusion="gate", width=16),
+               "loss": {"name": "focal_tversky", "alpha": 0.7, "beta": 0.3, "gamma": 1.33}},
 }
 
 # Cheapest-first-ish, likely winners on top: the deadline may cut the tail.
