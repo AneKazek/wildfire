@@ -328,17 +328,17 @@ class BranchEnc(nn.Module):
     def __init__(self, cin: int, width: int, depth: int, kind: str, sizes):
         super().__init__()
         self.stem = cna(cin, width)
-        ws = [width, 2 * width, 4 * width]
+        ws = [width * 2 ** i for i in range(len(sizes))]
         self.stages = nn.ModuleList([
-            nn.Sequential(*[SpecBlock(ws[i], sizes[i], kind) for _ in range(depth)]) for i in range(3)])
-        self.down = nn.ModuleList([cna(ws[i], ws[i + 1], 3, stride=2) for i in range(2)])
+            nn.Sequential(*[SpecBlock(ws[i], sizes[i], kind) for _ in range(depth)]) for i in range(len(sizes))])
+        self.down = nn.ModuleList([cna(ws[i], ws[i + 1], 3, stride=2) for i in range(len(sizes) - 1)])
 
     def forward(self, x):
         h, out = self.stem(x), []
         for i, st in enumerate(self.stages):
             h = st(h)
             out.append(h)
-            if i < 2:
+            if i < len(self.stages) - 1:
                 h = self.down[i](h)
         return out
 
@@ -364,27 +364,36 @@ class Fuse(nn.Module):
 
 
 class TDUNet(nn.Module):
-    """k parallel transform encoders, shared decoder, fused at every scale."""
+    """k parallel transform encoders, shared decoder, fused at every scale.
+
+    `dec` widens only the decoder (the trunk stays 1M), `attn` adds SE channel
+    attention after each fusion. Both default to the screened winner's shape.
+    """
 
     def __init__(self, cin: int, width: int = 16, branches=("ht", "dct"), depth: int = 1,
-                 fusion: str = "gate", sizes=(64, 32, 16)):
+                 fusion: str = "gate", sizes=(64, 32, 16), attn: bool = False, dec: int = 1):
         super().__init__()
-        w, k = width, len(branches)
+        w, k, n = width, len(branches), len(sizes)
+        ch = [w * 2 ** i for i in range(n)]
         self.enc = nn.ModuleList([BranchEnc(cin, w, depth, b, sizes) for b in branches])
-        self.fuse = nn.ModuleList([Fuse(w, k, fusion), Fuse(2 * w, k, fusion), Fuse(4 * w, k, fusion)])
-        self.up = nn.ModuleList([cna(4 * w, 2 * w), cna(2 * w, w)])
-        self.mix = nn.ModuleList([cna(4 * w, 2 * w), cna(2 * w, w)])
-        self.out_c = w
+        fuses = []
+        for c in ch:
+            f = Fuse(c, k, fusion)
+            fuses.append(nn.Sequential(f, SE(c)) if attn else f)
+        self.fuse = nn.ModuleList(fuses)
+        self.up = nn.ModuleList([cna(ch[i + 1] * (dec if i < n - 2 else 1), ch[i] * dec)
+                                 for i in range(n - 1)])
+        self.mix = nn.ModuleList([cna(ch[i] * dec + ch[i], ch[i] * dec) for i in range(n - 1)])
+        self.out_c = w * dec
 
     def forward(self, x):
         fs = [e(x) for e in self.enc]
-        h = self.fuse[2]([f[2] for f in fs])
-        h = self.up[0](h)
-        h = F.interpolate(h, size=fs[0][1].shape[-2:], mode="bilinear", align_corners=False)
-        h = self.mix[0](torch.cat([h, self.fuse[1]([f[1] for f in fs])], 1))
-        h = self.up[1](h)
-        h = F.interpolate(h, size=fs[0][0].shape[-2:], mode="bilinear", align_corners=False)
-        return self.mix[1](torch.cat([h, self.fuse[0]([f[0] for f in fs])], 1))
+        h = self.fuse[-1]([f[-1] for f in fs])
+        for i in range(len(fs[0]) - 2, -1, -1):
+            h = self.up[i](h)
+            h = F.interpolate(h, size=fs[0][i].shape[-2:], mode="bilinear", align_corners=False)
+            h = self.mix[i](torch.cat([h, self.fuse[i]([f[i] for f in fs])], 1))
+        return h
 
 
 class Head(nn.Module):
@@ -422,7 +431,8 @@ class Net(nn.Module):
         elif trunk == "td":
             self.trunk = TDUNet(cin, cfg.pop("width", 16), tuple(cfg.pop("branches", ("ht", "dct"))),
                                 cfg.pop("depth", 1), cfg.pop("fusion", "gate"),
-                                tuple(cfg.pop("sizes", (64, 32, 16))))
+                                tuple(cfg.pop("sizes", (64, 32, 16))), cfg.pop("attn", False),
+                                cfg.pop("dec", 1))
         else:
             raise ValueError(f"unknown trunk {trunk}")
         if cfg:

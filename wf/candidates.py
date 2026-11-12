@@ -147,6 +147,15 @@ CANDIDATES: dict[str, dict] = {
                  "loss": {"name": "bce_dice", "pos_weight": 5.0, "moment_weight": 0.5}},
     "td_mom10": {**td(branches=["ht", "dct", "conv"], fusion="gate", width=16),
                  "loss": {"name": "bce_dice", "pos_weight": 5.0, "moment_weight": 1.0}},
+
+    # --- round 4: architecture brute force around the same trunk ---
+    "td_attn": td(branches=["ht", "dct", "conv"], fusion="gate", width=16, attn=True),
+    "td_dec2": td(branches=["ht", "dct", "conv"], fusion="gate", width=16, dec=2),
+    "td_4s": td(branches=["ht", "dct", "conv"], fusion="gate", width=16, sizes=(64, 32, 16, 8)),
+    "td_4s_dec2": td(branches=["ht", "dct", "conv"], fusion="gate", width=16,
+                     sizes=(64, 32, 16, 8), dec=2),
+    "td_w8": td(branches=["ht", "dct", "conv"], fusion="gate", width=8),
+    "td_d3": td(branches=["ht", "dct", "conv"], fusion="gate", width=16, depth=3),
 }
 
 # Cheapest-first-ish, likely winners on top: the deadline may cut the tail.
