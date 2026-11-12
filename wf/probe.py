@@ -78,7 +78,10 @@ def main() -> None:
     res["topk"] = round(score(tk), 4)
     res["topk_gt"] = round(score(tk_gt), 4)
 
-    disk_pre, disk_both, cen_err = np.zeros_like(base_masks), np.zeros_like(base_masks), []
+    disk_pre = np.zeros_like(base_masks)
+    disk_both = np.zeros_like(base_masks)
+    disk_peak = np.zeros_like(base_masks)
+    cen_err = [], []
     for i in range(len(p)):
         m = base_masks[i]
         if not m.any():
@@ -86,10 +89,13 @@ def main() -> None:
         cy, cx = ndi.center_of_mass(m)
         disk_pre[i] = _disk_at(cy, cx, int(area[i]))
         disk_both[i] = _disk_at(cy, cx, int(round(m.sum())))
+        py, px = np.unravel_index(int(np.argmax(ndi.gaussian_filter(p[i], 1.5))), p[i].shape)
+        disk_peak[i] = _disk_at(py, px, int(round(m.sum())))
         gy, gx = ndi.center_of_mass(g[i])
         cen_err.append(float(np.hypot(cy - gy, cx - gx)))
     res["disk_pre"] = round(score(disk_pre), 4)
     res["disk_both"] = round(score(disk_both), 4)
+    res["disk_peak"] = round(score(disk_peak), 4)
     res["miss"] = round(float(np.mean([not m.any() for m in base_masks])), 4)
     res["cen_err_p50"] = round(float(np.median(cen_err)), 2)
     res["cen_err_p90"] = round(float(np.percentile(cen_err, 90)), 2)
