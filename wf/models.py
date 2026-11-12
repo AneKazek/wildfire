@@ -446,7 +446,10 @@ class Net(nn.Module):
         self.area_head = None
         if wide:
             self.area_head = nn.Sequential(nn.Linear(2 * c, wide), nn.GELU(), nn.Linear(wide, 1))
-            nn.init.constant_(self.area_head[-1].bias, 2.9)  # ~ln 17 px, the mean GT area
+            # Start exactly at the mean GT area: a random last layer can land far
+            # from it, which puts the joint training in a useless basin.
+            nn.init.zeros_(self.area_head[-1].weight)
+            nn.init.constant_(self.area_head[-1].bias, 2.9)  # ~ln 17 px
 
     def forward(self, x):
         x = (x - self.mean) / self.std
@@ -482,6 +485,7 @@ class SMPNet(nn.Module):
                 lambda _m, a: setattr(self, "_feat", a[0]))
             self.area_head = nn.Sequential(nn.Linear(2 * conv.in_channels, area), nn.GELU(),
                                            nn.Linear(area, 1))
+            nn.init.zeros_(self.area_head[-1].weight)
             nn.init.constant_(self.area_head[-1].bias, 2.9)
 
     def forward(self, x):
