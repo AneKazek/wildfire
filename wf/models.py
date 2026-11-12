@@ -368,10 +368,15 @@ class TDUNet(nn.Module):
 
     `dec` widens only the decoder (the trunk stays 1M), `attn` adds SE channel
     attention after each fusion. Both default to the screened winner's shape.
+    `ds` exposes the half-resolution decoder feature for deep supervision.
+    `hr` adds a 2x sub-pixel branch: a stem on the upsampled input, concatenated
+    with the upsampled decoder feature, so the head decides on a 128x128 lattice
+    and its logits are pooled back to 64 (`out_up`).
     """
 
     def __init__(self, cin: int, width: int = 16, branches=("ht", "dct"), depth: int = 1,
-                 fusion: str = "gate", sizes=(64, 32, 16), attn: bool = False, dec: int = 1):
+                 fusion: str = "gate", sizes=(64, 32, 16), attn: bool = False, dec: int = 1,
+                 ds: bool = False, hr: int = 0):
         super().__init__()
         w, k, n = width, len(branches), len(sizes)
         ch = [w * 2 ** i for i in range(n)]
@@ -385,15 +390,28 @@ class TDUNet(nn.Module):
                                  for i in range(n - 1)])
         self.mix = nn.ModuleList([cna(ch[i] * dec + ch[i], ch[i] * dec) for i in range(n - 1)])
         self.out_c = w * dec
+        self.ds, self.hr, self.aux_channels = ds, hr, []
+        self.out_up = 2 if hr else 1
+        if ds and n >= 3:
+            self.aux_channels = [ch[n - 2] * dec]
+        if hr:
+            self.hr_stem = nn.Sequential(cna(cin, hr), cna(hr, hr))
+            self.hr_mix = cna(self.out_c + hr, self.out_c)
 
     def forward(self, x):
         fs = [e(x) for e in self.enc]
         h = self.fuse[-1]([f[-1] for f in fs])
-        for i in range(len(fs[0]) - 2, -1, -1):
+        aux, first = [], len(fs[0]) - 2
+        for i in range(first, -1, -1):
             h = self.up[i](h)
             h = F.interpolate(h, size=fs[0][i].shape[-2:], mode="bilinear", align_corners=False)
+            if self.ds and i == first and self.aux_channels:
+                aux.append(h)  # coarsest decoder stage, 32x32 for the 3-scale trunk
             h = self.mix[i](torch.cat([h, self.fuse[i]([f[i] for f in fs])], 1))
-        return h
+        if self.hr:
+            up = dict(scale_factor=2, mode="bilinear", align_corners=False)
+            h = self.hr_mix(torch.cat([F.interpolate(h, **up), self.hr_stem(F.interpolate(x, **up))], 1))
+        return (h, aux) if self.ds else h
 
 
 class Head(nn.Module):
@@ -432,7 +450,7 @@ class Net(nn.Module):
             self.trunk = TDUNet(cin, cfg.pop("width", 16), tuple(cfg.pop("branches", ("ht", "dct"))),
                                 cfg.pop("depth", 1), cfg.pop("fusion", "gate"),
                                 tuple(cfg.pop("sizes", (64, 32, 16))), cfg.pop("attn", False),
-                                cfg.pop("dec", 1))
+                                cfg.pop("dec", 1), cfg.pop("ds", False), cfg.pop("hr", 0))
         else:
             raise ValueError(f"unknown trunk {trunk}")
         wide = cfg.pop("area", 0)
@@ -440,6 +458,8 @@ class Net(nn.Module):
             raise ValueError(f"unused model keys: {sorted(cfg)}")
         c = self.trunk.out_c
         self.heads = nn.ModuleDict({h: Head(c, 4 if h == "dist" else 1) for h in heads})
+        self.aux = nn.ModuleDict({f"aux{i}": Head(ac, 1)
+                                  for i, ac in enumerate(getattr(self.trunk, "aux_channels", []))})
         # Per-patch fire size, regressed from the decoder's global statistics. The
         # mask's own probability mass is a poor size estimate (corr 0.56 with the
         # GT area), while the area decides ~0.09 Dice at fixed ranking.
@@ -454,7 +474,17 @@ class Net(nn.Module):
     def forward(self, x):
         x = (x - self.mean) / self.std
         f = self.trunk(x)
+        aux = []
+        if isinstance(f, tuple):
+            f, aux = f
         out = {h: m(f) for h, m in self.heads.items()}
+        up = getattr(self.trunk, "out_up", 1)
+        if up > 1:
+            # The head decides on the finer lattice; average-pool its logits so
+            # the loss and the metrics stay on the 64x64 label grid.
+            out = {k: (F.avg_pool2d(v, up) if k == "main" else v) for k, v in out.items()}
+        for i, a in enumerate(aux):
+            out[f"aux{i}"] = self.aux[f"aux{i}"](a)
         if self.area_head is not None:
             out["area"] = self.area_head(torch.cat([f.mean((2, 3)), f.amax((2, 3))], 1)).squeeze(1)
         return out

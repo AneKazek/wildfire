@@ -86,6 +86,7 @@ def main() -> None:
     ap.add_argument("--runs", default="results/runs")
     ap.add_argument("--skip-train", action="store_true")
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--resume", default=None, help="checkpoint to fine-tune from, e.g. a stage-1 best.pt")
     ap.add_argument("--tag", default="", help="suffix for the run dir, e.g. _seed1")
     args = ap.parse_args()
 
@@ -98,7 +99,7 @@ def main() -> None:
     out = Path(args.runs) / run_name
 
     if not args.skip_train:
-        run(cfg, run_name, args.runs)
+        run(cfg, run_name, args.runs, resume_from=args.resume)
 
     ckpt = torch.load(out / "best.pt", map_location=dev)
     model, prep, drop = build(cfg, root)

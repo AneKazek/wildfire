@@ -166,6 +166,13 @@ CANDIDATES: dict[str, dict] = {
     # --- round 6: optimise the per-image metric directly ---
     "td_lovasz": {**td(branches=["ht", "dct", "conv"], fusion="gate", width=16),
                   "loss": {"name": "lovasz"}},
+
+    # --- round 7: deep supervision and the high-resolution sub-pixel branch ---
+    "td_ds": {**td(branches=["ht", "dct", "conv"], fusion="gate", width=16, ds=True),
+              "loss": {"name": "bce_dice", "pos_weight": 5.0, "ds_weight": 0.5}},
+    "td_hr": td(branches=["ht", "dct", "conv"], fusion="gate", width=16, hr=8),
+    "td_hr_ds": {**td(branches=["ht", "dct", "conv"], fusion="gate", width=16, hr=8, ds=True),
+                 "loss": {"name": "bce_dice", "pos_weight": 5.0, "ds_weight": 0.5}},
 }
 
 # Cheapest-first-ish, likely winners on top: the deadline may cut the tail.

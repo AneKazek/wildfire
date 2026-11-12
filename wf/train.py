@@ -111,6 +111,11 @@ def run(cfg: dict, run_name: str | None = None, out_dir: str | Path = "results/r
     use_amp = dev.type == "cuda" and bool(t.get("amp", True))
 
     model, prep, drop = build(cfg, root)
+    if resume_from:
+        # Fine-tuning: warm start from a converged checkpoint, keeping whatever
+        # heads still match (new heads stay at their init).
+        model.load_state_dict(torch.load(resume_from, map_location=dev)["model"], strict=False)
+        print(f"resumed from {resume_from}", flush=True)
     model = model.to(dev).to(memory_format=torch.channels_last)
     nparam = sum(p.numel() for p in model.parameters())
 
@@ -119,6 +124,7 @@ def run(cfg: dict, run_name: str | None = None, out_dir: str | Path = "results/r
     wb, wg = l.get("boundary_weight", 0.0), l.get("growth_weight", 0.0)
     wm = l.get("moment_weight", 0.0)
     wa = l.get("area_weight", 0.0)
+    wds = l.get("ds_weight", 0.0)
     # Fork + copy-on-write makes an in-RAM copy per worker: a 100k subset is
     # 3.8 GB, i.e. ~38 GB across 10 workers, which the cgroup OOM-kills.
     in_mem = d.get("in_memory")
@@ -185,6 +191,13 @@ def run(cfg: dict, run_name: str | None = None, out_dir: str | Path = "results/r
                     # L1 on log area = relative error; a 0.3 loss is ~30% off.
                     at = torch.log1p((y * v).sum(dim=(1, 2, 3)))
                     loss = loss + wa * F.l1_loss(o["area"].float(), at)
+                if wds:
+                    for k, a in o.items():
+                        if k.startswith("aux"):
+                            s = a.shape[-2:]
+                            loss = loss + wds * criterion(a.float(),
+                                                          F.interpolate(y, size=s, mode="area"),
+                                                          F.interpolate(v, size=s, mode="area"))
                 if wb and "boundary" in o:
                     loss = loss + wb * criterion(o["boundary"].float(), aux[:, 0:1], v)
                 if wg and "growth" in o:
