@@ -461,7 +461,7 @@ class SMPNet(nn.Module):
     """segmentation_models_pytorch wrapper with the same normalisation + dict output."""
 
     def __init__(self, arch: str, encoder: str, weights: str | None, mean: list[float], std: list[float],
-                 cin: int = 23, heads=("main",), up: int = 1):
+                 cin: int = 23, heads=("main",), up: int = 1, area: int = 0):
         super().__init__()
         import segmentation_models_pytorch as smp
 
@@ -473,6 +473,16 @@ class SMPNet(nn.Module):
         # Tiny targets in a 64x64 patch: run the encoder on a finer grid, then
         # bring the logits back so the loss and metrics stay at 64x64.
         self.up = int(up)
+        self.area_head = self._feat = None
+        if area:
+            # The decoder's full-res features are the segmentation head's input;
+            # grab them there so this works for every smp architecture.
+            conv = next(m for m in self.model.segmentation_head.modules() if isinstance(m, nn.Conv2d))
+            self.model.segmentation_head.register_forward_pre_hook(
+                lambda _m, a: setattr(self, "_feat", a[0]))
+            self.area_head = nn.Sequential(nn.Linear(2 * conv.in_channels, area), nn.GELU(),
+                                           nn.Linear(area, 1))
+            nn.init.constant_(self.area_head[-1].bias, 2.9)
 
     def forward(self, x):
         x = (x - self.mean) / self.std
@@ -483,7 +493,11 @@ class SMPNet(nn.Module):
         o = self.model(x)
         if self.up > 1:
             o = F.interpolate(o, size=size, mode="bilinear", align_corners=False)
-        return {h: o[:, i:i + 1] for i, h in enumerate(self.head_names)}
+        out = {h: o[:, i:i + 1] for i, h in enumerate(self.head_names)}
+        if self.area_head is not None:
+            f = self._feat
+            out["area"] = self.area_head(torch.cat([f.mean((2, 3)), f.amax((2, 3))], 1)).squeeze(1)
+        return out
 
 
 def build_model(mcfg: dict, mean, std) -> nn.Module:
@@ -493,5 +507,5 @@ def build_model(mcfg: dict, mean, std) -> nn.Module:
         heads = mcfg.pop("heads", ["main"])
         up = mcfg.pop("up", 1)
         return SMPNet(smp["arch"], smp["encoder"], smp.get("weights", "imagenet"), mean, std,
-                      cin=mcfg.pop("cin", 23), heads=heads, up=up)
+                      cin=mcfg.pop("cin", 23), heads=heads, up=up, area=mcfg.pop("area", 0))
     return Net(mcfg, mean, std)
