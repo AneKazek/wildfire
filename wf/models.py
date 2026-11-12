@@ -446,6 +446,7 @@ class Net(nn.Module):
         self.area_head = None
         if wide:
             self.area_head = nn.Sequential(nn.Linear(2 * c, wide), nn.GELU(), nn.Linear(wide, 1))
+            nn.init.constant_(self.area_head[-1].bias, 2.9)  # ~ln 17 px, the mean GT area
 
     def forward(self, x):
         x = (x - self.mean) / self.std
