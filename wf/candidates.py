@@ -162,6 +162,10 @@ CANDIDATES: dict[str, dict] = {
                 "loss": {"name": "bce_dice", "pos_weight": 5.0, "area_weight": 1.0}},
     "td_area_w2": {**td(branches=["ht", "dct", "conv"], fusion="gate", width=16, area=64),
                    "loss": {"name": "bce_dice", "pos_weight": 5.0, "area_weight": 2.0}},
+
+    # --- round 6: optimise the per-image metric directly ---
+    "td_lovasz": {**td(branches=["ht", "dct", "conv"], fusion="gate", width=16),
+                  "loss": {"name": "lovasz"}},
 }
 
 # Cheapest-first-ish, likely winners on top: the deadline may cut the tail.
