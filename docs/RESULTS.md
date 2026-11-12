@@ -207,10 +207,10 @@ On the rebuilt cache, two cheap post-processing levers were tested and rejected:
   middle of large fires.
 * **Blob decoders with an estimated area** (`wf.decode`): replacing the mask by a disk of
   the probability mass at the mask centroid scores 0.425, below the plain threshold at
-  0.459, for every scale tried (0.9–1.2) and for a mask-below-size hybrid. The
-  probability mass is a poor size estimate (log-log correlation 0.56 with the GT area),
-  and an eval-side 3-feature log-log fit gets 0.4496 held out. A shape prior needs a
-  trained size head, not a calibrated mask statistic.
+  0.459, for every scale tried (0.9–1.2) and for a mask-below-size hybrid.
+* **Per-patch area head** (`td_area`, `td_area_w2`): 0.4537 with top-k decode, i.e. no
+  gain. See the error decomposition below — the size is not predictable from either the
+  decoder features or the patch inputs.
 * **Soft targets** (`td_gate3_soft8`): 0.4273 vs 0.4590. AP (0.5885 vs 0.5766),
   `hard_dice` (0.1845 vs 0.1269) and boundary F1 (0.8444 vs 0.8362) all improve — the
   fuzzy edge is a real boundary effect — but macro Dice drops, because 64% of the
@@ -231,9 +231,22 @@ On the rebuilt cache, two cheap post-processing levers were tested and rejected:
 Location is not the problem: centroid error is 1.24 px (median) / 10.97 (p90), and the
 probability mass is within 4% of the GT area *in total*. The problem is that the mass is
 spread over the wrong pixels, and that no mask statistic predicts the per-patch area.
-With a noisy oracle area (`area × lognormal(σ)`), top-k scores 0.552 (σ=0.15), 0.542
-(0.30), 0.530 (0.45), 0.513 (0.60) and 0.479 (0.90) — so an area head only has to be
-within ~40% to be worth more than a point of Dice. Hence the per-patch area head.
+
+**A per-patch area head does not fix it** (`td_area`, `td_area_w2`): a global-pool MLP on
+the decoder features, L1 on log area, zero-initialised to start from the mask's own mass,
+with top-k decode and a global area scale swept on eval. Result 0.4537 (weight 1.0) — no
+gain over the 0.4590 threshold. The head does not learn the size: log-log correlation with
+the GT area 0.557 versus 0.541 for the mask's own probability mass, median relative error
+0.52 vs 0.56. The decoder representation has discarded the information.
+
+Nor is it in the inputs: a ridge on 64 per-patch input summaries (mean/std/max of every
+cached channel, fitted on 40k train patches) reaches corr 0.166 on eval with median
+relative error 0.68 — far *worse* than the mask's own mass. `wf.area` keeps the probe.
+
+The synthetic noise ablation that motivated the head was too kind: `area × lognormal(σ)`
+scores 0.542 at σ=0.30 and 0.479 at σ=0.90, but a real estimator with the same median
+relative error (0.56) scores only 0.451, because its errors are biased and correlated.
+The area route is closed.
 
 ## Alternative datasets (reviewed, not used)
 
