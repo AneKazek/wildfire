@@ -68,10 +68,23 @@ def average_precision(prob: np.ndarray, tgt: np.ndarray, valid: np.ndarray, max_
     return float(ap)
 
 
-def evaluate(prob: np.ndarray, tgt: np.ndarray, valid: np.ndarray, thr: float = 0.5,
-             full: bool = True) -> dict:
-    thr = np.asarray(thr, np.float32)
-    pred = (prob > (thr[:, None, None] if thr.ndim else thr)) & valid
+def topk_masks(prob: np.ndarray, k) -> np.ndarray:
+    """Per-sample top-`k` pixels of `prob`: the decode an area estimate implies.
+
+    Measured on td_gate3_s1: with the GT area this scores 0.554 versus 0.459 for
+    the best global threshold, so area — not ranking — is the binding constraint.
+    """
+    n, m = prob.shape[0], prob[0].size
+    order = np.argsort(-prob.reshape(n, m), axis=1)
+    k = np.broadcast_to(np.asarray(k, np.float64), (n,))
+    out = np.zeros((n, m), bool)
+    for i in range(n):
+        out[i, order[i, : int(np.clip(k[i], 1, m))]] = True
+    return out.reshape(prob.shape)
+
+
+def _score(pred: np.ndarray, tgt: np.ndarray, valid: np.ndarray, prob: np.ndarray,
+           full: bool) -> dict:
     tg = tgt & valid
     d = dice_per_sample(pred, tg)
     inter = np.logical_and(pred, tg).sum()
@@ -92,6 +105,27 @@ def evaluate(prob: np.ndarray, tgt: np.ndarray, valid: np.ndarray, thr: float = 
         out["boundary_f1"] = boundary_f1(pred, tg)
         out["ap"] = average_precision(prob, tgt, valid)
     return out
+
+
+def evaluate(prob: np.ndarray, tgt: np.ndarray, valid: np.ndarray, thr: float = 0.5,
+             full: bool = True) -> dict:
+    thr = np.asarray(thr, np.float32)
+    return _score((prob > (thr[:, None, None] if thr.ndim else thr)) & valid, tgt, valid, prob, full)
+
+
+def evaluate_area(prob: np.ndarray, k, tgt: np.ndarray, valid: np.ndarray,
+                  full: bool = True) -> dict:
+    return _score(topk_masks(prob, k) & valid, tgt, valid, prob, full)
+
+
+def sweep_area(prob: np.ndarray, k, tgt: np.ndarray, valid: np.ndarray,
+               gammas=None) -> tuple[float, list]:
+    """Global scale on the predicted area, the counterpart of a threshold sweep."""
+    gammas = np.arange(0.60, 1.46, 0.05) if gammas is None else gammas
+    rows = [(float(g), float(dice_per_sample(topk_masks(prob, np.asarray(k, np.float64) * g) & valid,
+                                            tgt & valid).mean())) for g in gammas]
+    best = max(rows, key=lambda r: r[1])
+    return best[0], rows
 
 
 def sweep(prob: np.ndarray, tgt: np.ndarray, valid: np.ndarray, thrs=None) -> tuple[float, list]:

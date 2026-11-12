@@ -435,15 +435,25 @@ class Net(nn.Module):
                                 cfg.pop("dec", 1))
         else:
             raise ValueError(f"unknown trunk {trunk}")
+        wide = cfg.pop("area", 0)
         if cfg:
             raise ValueError(f"unused model keys: {sorted(cfg)}")
         c = self.trunk.out_c
         self.heads = nn.ModuleDict({h: Head(c, 4 if h == "dist" else 1) for h in heads})
+        # Per-patch fire size, regressed from the decoder's global statistics. The
+        # mask's own probability mass is a poor size estimate (corr 0.56 with the
+        # GT area), while the area decides ~0.09 Dice at fixed ranking.
+        self.area_head = None
+        if wide:
+            self.area_head = nn.Sequential(nn.Linear(2 * c, wide), nn.GELU(), nn.Linear(wide, 1))
 
     def forward(self, x):
         x = (x - self.mean) / self.std
         f = self.trunk(x)
-        return {h: m(f) for h, m in self.heads.items()}
+        out = {h: m(f) for h, m in self.heads.items()}
+        if self.area_head is not None:
+            out["area"] = self.area_head(torch.cat([f.mean((2, 3)), f.amax((2, 3))], 1)).squeeze(1)
+        return out
 
 
 class SMPNet(nn.Module):

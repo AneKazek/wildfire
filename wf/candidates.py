@@ -156,6 +156,12 @@ CANDIDATES: dict[str, dict] = {
                      sizes=(64, 32, 16, 8), dec=2),
     "td_w8": td(branches=["ht", "dct", "conv"], fusion="gate", width=8),
     "td_d3": td(branches=["ht", "dct", "conv"], fusion="gate", width=16, depth=3),
+
+    # --- round 5: explicit area head + top-k decode (the measured bottleneck) ---
+    "td_area": {**td(branches=["ht", "dct", "conv"], fusion="gate", width=16, area=32),
+                "loss": {"name": "bce_dice", "pos_weight": 5.0, "area_weight": 1.0}},
+    "td_area_w2": {**td(branches=["ht", "dct", "conv"], fusion="gate", width=16, area=64),
+                   "loss": {"name": "bce_dice", "pos_weight": 5.0, "area_weight": 2.0}},
 }
 
 # Cheapest-first-ish, likely winners on top: the deadline may cut the tail.

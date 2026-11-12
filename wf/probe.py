@@ -61,7 +61,7 @@ def main() -> None:
     ds = FireDataset(args.root, "eval", None, aux=False, prep=prep, drop=drop)
     tgt, valid = _targets(ds)
     p = predict_tta(model, torch.utils.data.DataLoader(ds, batch_size=512, num_workers=4),
-                    dev, torch.bfloat16, args.tta)
+                    dev, torch.bfloat16, args.tta)[0]
     np.save(out / "eval_prob.npy", p)
     thr, rows = sweep(p, tgt, valid)
     g = tgt & valid

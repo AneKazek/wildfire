@@ -11,7 +11,7 @@ import torch
 
 from .candidates import make_cfg
 from .data import PAIRS, FireDataset, jac, split_indices
-from .metrics import evaluate, sweep
+from .metrics import evaluate, evaluate_area, sweep, sweep_area
 from .train import _loader, build, norm_stats, run
 
 
@@ -47,9 +47,12 @@ def _inv(p: torch.Tensor, k: int) -> torch.Tensor:
 
 @torch.no_grad()
 def predict_tta(model, loader, device, dtype, tta: int = 8):
+    """Mean probability over the dihedral group, plus the area prediction if the
+    model has an area head (invariant under the group, so the plain mean)."""
     model.eval()
     ks = list(range(tta)) if tta > 1 else [0]
     probs = [None] * len(ks)
+    areas = []
     for i, k in enumerate(ks):
         acc = []
         for x, _, _, _ in loader:
@@ -59,10 +62,13 @@ def predict_tta(model, loader, device, dtype, tta: int = 8):
                 xk = _vec(xk, k)
             xk = xk.contiguous(memory_format=torch.channels_last)
             with torch.autocast("cuda", dtype=dtype, enabled=device.type == "cuda"):
-                out = model(xk)["main"]
-            acc.append(_inv(torch.sigmoid(out.float()), k).cpu().numpy()[:, 0])
+                o = model(xk)
+            acc.append(_inv(torch.sigmoid(o["main"].float()), k).cpu().numpy()[:, 0])
+            if i == 0 and "area" in o:
+                areas.append(o["area"].float().cpu().numpy())
         probs[i] = np.concatenate(acc)
-    return np.mean(probs, axis=0)
+    area = np.concatenate(areas) if areas else None
+    return np.mean(probs, axis=0), area
 
 
 def _targets(ds):
@@ -102,18 +108,27 @@ def main() -> None:
     ev_ds = FireDataset(root, "eval", None, aux=False, prep=prep, drop=drop)
     tg, va = _targets(ev_ds)
     ld = _loader(ev_ds, 512, False, 4)
-    prob = predict_tta(model, ld, dev, dtype, args.tta)
-    thr, rows = sweep(prob, tg, va)
-    ev = evaluate(prob, tg, va, thr, full=True)
+    prob, ar = predict_tta(model, ld, dev, dtype, args.tta)
+    if ar is not None:
+        thr, rows = sweep_area(prob, np.expm1(ar), tg, va)
+        ev = evaluate_area(prob, np.expm1(ar) * thr, tg, va, full=True)
+        res_decode = "area"
+    else:
+        thr, rows = sweep(prob, tg, va)
+        ev = evaluate(prob, tg, va, thr, full=True)
+        res_decode = "thr"
     res = {"name": args.name, "run": run_name, "seed": args.seed, "stage": args.stage, "tta": args.tta,
-           "thr": thr, "sweep": rows, "eval": ev, "prep": prep, "drop": drop}
+           "decode": res_decode, "thr": thr, "sweep": rows, "eval": ev, "prep": prep, "drop": drop}
     np.save(out / "eval_prob.npy", prob)
+    if ar is not None:
+        np.save(out / "eval_area.npy", ar)
 
     if args.test:
         te_ds = FireDataset(root, "test", None, aux=False, prep=prep, drop=drop)
         ttg, tva = _targets(te_ds)
-        tprob = predict_tta(model, _loader(te_ds, 512, False, 4), dev, dtype, args.tta)
-        res["test"] = evaluate(tprob, ttg, tva, thr, full=True)
+        tprob, tar = predict_tta(model, _loader(te_ds, 512, False, 4), dev, dtype, args.tta)
+        res["test"] = (evaluate_area(tprob, np.expm1(tar) * thr, ttg, tva, full=True) if tar is not None
+                       else evaluate(tprob, ttg, tva, thr, full=True))
 
     (out / "final.json").write_text(json.dumps(res, indent=1))
     print(json.dumps({k: res[k] for k in ("name", "thr", "eval")}, indent=1), flush=True)

@@ -15,7 +15,7 @@ from torch.utils.data import DataLoader, Subset
 
 from .data import CHANNELS, FireDataset, split_indices
 from .losses import make_loss, moment
-from .metrics import evaluate, sweep
+from .metrics import evaluate, evaluate_area, sweep, sweep_area
 from .models import build_model
 from .prep import norm_for
 
@@ -78,17 +78,21 @@ def _loader(ds, bs: int, shuffle: bool, workers: int) -> DataLoader:
 
 
 @torch.no_grad()
-def predict(model, loader, device, dtype) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+def predict(model, loader, device, dtype):
+    """Probabilities plus, when the model has one, the predicted log1p(area)."""
     model.eval()
-    probs, tgts, valids = [], [], []
+    probs, tgts, valids, areas = [], [], [], []
     for x, y, v, _ in loader:
         x = x.to(device, non_blocking=True).float().to(memory_format=torch.channels_last)
         with torch.autocast("cuda", dtype=dtype, enabled=device.type == "cuda"):
-            out = model(x)["main"]
-        probs.append(torch.sigmoid(out.float()).cpu().numpy()[:, 0])
+            o = model(x)
+        probs.append(torch.sigmoid(o["main"].float()).cpu().numpy()[:, 0])
+        if "area" in o:
+            areas.append(o["area"].float().cpu().numpy())
         tgts.append(y.numpy() > 0.5)
         valids.append(v.numpy() > 0.5)
-    return np.concatenate(probs), np.concatenate(tgts), np.concatenate(valids)
+    area = np.concatenate(areas) if areas else None
+    return np.concatenate(probs), np.concatenate(tgts), np.concatenate(valids), area
 
 
 def run(cfg: dict, run_name: str | None = None, out_dir: str | Path = "results/runs",
@@ -114,6 +118,7 @@ def run(cfg: dict, run_name: str | None = None, out_dir: str | Path = "results/r
     criterion = make_loss(l)
     wb, wg = l.get("boundary_weight", 0.0), l.get("growth_weight", 0.0)
     wm = l.get("moment_weight", 0.0)
+    wa = l.get("area_weight", 0.0)
     # Fork + copy-on-write makes an in-RAM copy per worker: a 100k subset is
     # 3.8 GB, i.e. ~38 GB across 10 workers, which the cgroup OOM-kills.
     in_mem = d.get("in_memory")
@@ -176,6 +181,10 @@ def run(cfg: dict, run_name: str | None = None, out_dir: str | Path = "results/r
                 loss = criterion(o["main"].float(), y, v)
                 if wm:
                     loss = loss + wm * moment(o["main"].float(), y, v)
+                if wa and "area" in o:
+                    # L1 on log area = relative error; a 0.3 loss is ~30% off.
+                    at = torch.log1p((y * v).sum(dim=(1, 2, 3)))
+                    loss = loss + wa * F.l1_loss(o["area"].float(), at)
                 if wb and "boundary" in o:
                     loss = loss + wb * criterion(o["boundary"].float(), aux[:, 0:1], v)
                 if wg and "growth" in o:
@@ -194,8 +203,9 @@ def run(cfg: dict, run_name: str | None = None, out_dir: str | Path = "results/r
         dt = time.time() - t0
         t_eval = time.time()
         with ema.apply(model):
-            prob, tg, va = predict(model, ev_ld, dev, dtype)
-        mt = evaluate(prob, tg, va, 0.5, full=False)
+            prob, tg, va, ar = predict(model, ev_ld, dev, dtype)
+        mt = (evaluate_area(prob, np.expm1(ar), tg, va, full=False) if ar is not None
+              else evaluate(prob, tg, va, 0.5, full=False))
         t_eval = time.time() - t_eval
         row = {"epoch": epoch, "loss": float(np.mean(losses)), "train_sps": int(seen / dt),
                "lr": opt.param_groups[0]["lr"], **{f"val_{k}": v for k, v in mt.items()},
@@ -225,11 +235,17 @@ def run(cfg: dict, run_name: str | None = None, out_dir: str | Path = "results/r
     if ckpt.exists():
         model.load_state_dict(torch.load(ckpt, map_location=dev)["model"], strict=False)
     full_ds = FireDataset(root, "eval", None, aux=False, prep=prep, drop=drop)
-    prob, tg, va = predict(model, _loader(full_ds, 512, False, 4), dev, dtype)
-    thr, rows = sweep(prob, tg, va)
-    full = evaluate(prob, tg, va, thr, full=True)
+    prob, tg, va, ar = predict(model, _loader(full_ds, 512, False, 4), dev, dtype)
+    if ar is not None:
+        thr, rows = sweep_area(prob, np.expm1(ar), tg, va)
+        full = evaluate_area(prob, np.expm1(ar) * thr, tg, va, full=True)
+        decode = "area"
+    else:
+        thr, rows = sweep(prob, tg, va)
+        full = evaluate(prob, tg, va, thr, full=True)
+        decode = "thr"
     summary = {"name": name, "params": nparam, "best_epoch": best["epoch"], "best_thr": thr,
-               "best_macro_dice": best["macro_dice"], "val_at_best_thr": full,
+               "decode": decode, "best_macro_dice": best["macro_dice"], "val_at_best_thr": full,
                "minutes": round((time.time() - t_start) / 60, 1), "history": history, "sweep": rows,
                "cfg": cfg}
     (out / "summary.json").write_text(json.dumps(summary, indent=1))

@@ -81,7 +81,7 @@ def main() -> None:
         probs = []
         for name in names:
             model, _, _ = _load_run(name, dev, root)
-            probs.append(predict_tta(model, ld, dev, dtype, args.tta))
+            probs.append(predict_tta(model, ld, dev, dtype, args.tta)[0])
             del model
             torch.cuda.empty_cache()
         blend = np.average(probs, axis=0, weights=w)

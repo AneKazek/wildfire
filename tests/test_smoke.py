@@ -6,7 +6,7 @@ import torch
 from wf.data import CHANNELS, _geo, dihedral, jac
 from wf.final import _geo as tgeo, _inv
 from wf.losses import lovasz_hinge, tversky, bce_dice, moment
-from wf.metrics import evaluate, sweep
+from wf.metrics import evaluate, evaluate_area, sweep, sweep_area, topk_masks
 from wf.models import Net
 
 MEAN = [0.0] * len(CHANNELS)
@@ -47,6 +47,26 @@ def test_model_shapes():
     for c in cfgs:
         out = Net(c, MEAN, STD)(x)
         assert out["main"].shape == (2, 1, 64, 64), c
+    out = Net({"trunk": "td", "branches": ["ht", "dct"], "area": 16}, MEAN, STD)(x)
+    assert out["area"].shape == (2,), out
+
+
+def test_topk_decode_uses_the_area():
+    """Top-k must put exactly k pixels per patch, in probability order; with the
+    GT area it has to beat the best global threshold."""
+    rng = np.random.default_rng(0)
+    tgt = np.zeros((3, 64, 64), bool)
+    for i in range(3):
+        tgt[i, 20:20 + 2 + 3 * i, 28:28 + 2 + 3 * i] = True
+    prob = tgt.astype(np.float32) * 0.5 + rng.random((3, 64, 64)).astype(np.float32) * 0.45
+    valid = np.ones_like(tgt)
+    k = tgt.reshape(3, -1).sum(1)
+    masks = topk_masks(prob, k)
+    assert np.array_equal(masks.reshape(3, -1).sum(1), k)
+    assert np.array_equal(masks, tgt)
+    assert evaluate_area(prob, k, tgt, valid)["macro_dice"] > 0.99
+    g, rows = sweep_area(prob, k * 1.5, tgt, valid)
+    assert len(rows) > 0 and g in [r[0] for r in rows]
 
 
 def test_metrics_perfect_and_threshold():

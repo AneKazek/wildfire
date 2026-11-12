@@ -57,7 +57,7 @@ def main() -> None:
             print(name, "(cached)", flush=True)
         else:
             model, _, _ = _load_run(name, dev, root)
-            p = predict_tta(model, ld, dev, dtype, args.tta)
+            p = predict_tta(model, ld, dev, dtype, args.tta)[0]
             del model
             torch.cuda.empty_cache()
         probs.append(p)
@@ -85,7 +85,7 @@ def main() -> None:
         tp = []
         for name in names:
             model, _, _ = _load_run(name, dev, root)
-            tp.append(predict_tta(model, tld, dev, dtype, args.tta))
+            tp.append(predict_tta(model, tld, dev, dtype, args.tta)[0])
             del model
             torch.cuda.empty_cache()
         tblend = np.average(tp, axis=0, weights=w)
