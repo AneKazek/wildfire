@@ -59,6 +59,37 @@ def lovasz_hinge(logits, y, valid):
     return torch.stack(losses).mean() if losses else logits.sum() * 0
 
 
+def moment(logits, y, valid, scale: float = 64.0, floor: float = 0.05, cap: float = 4.0):
+    """Match the first two moments of the predicted fire mass to the target.
+
+    The metric is per-patch Dice on a ~6 px blob, so what decides it is where the
+    mass sits and how far it spreads. Segmentation losses are blind to both: a
+    diffuse-but-centred blob has the same Dice as a compact one of the same
+    overlap, and nothing pulls the mass into the blob. This term does.
+
+    `floor` removes the background probability carpet (BCE with pos_weight on
+    0.2% positives leaves p~0.01 everywhere, whose total mass rivals the fire);
+    `cap` keeps the early "all pixels at 0.5" phase from dominating the loss.
+    Units: pixels squared, divided by `scale` (8 px mean+spread error ~1.0).
+    """
+    p = torch.relu(torch.sigmoid(logits) - floor) * valid
+    t = y * valid
+    h, w = logits.shape[-2:]
+    ys = torch.arange(h, device=logits.device, dtype=torch.float32) - (h - 1) / 2
+    xs = torch.arange(w, device=logits.device, dtype=torch.float32) - (w - 1) / 2
+
+    def stats(a):
+        s = a.sum(dim=(1, 2, 3), keepdim=True).clamp_min(EPS)
+        my = (a * ys.view(1, 1, h, 1)).sum(dim=(1, 2, 3), keepdim=True) / s
+        mx = (a * xs.view(1, 1, 1, w)).sum(dim=(1, 2, 3), keepdim=True) / s
+        vy = (a * (ys.view(1, 1, h, 1) - my) ** 2).sum(dim=(1, 2, 3), keepdim=True) / s
+        vx = (a * (xs.view(1, 1, 1, w) - mx) ** 2).sum(dim=(1, 2, 3), keepdim=True) / s
+        return my, mx, torch.sqrt(vy + 0.25), torch.sqrt(vx + 0.25)
+
+    d = sum(((a - b) ** 2).mean() for a, b in zip(stats(p), stats(t))) / scale
+    return d.clamp(max=cap).mean()
+
+
 def make_loss(lcfg: dict):
     name = lcfg.get("name", "bce_dice")
     if name == "bce_dice":

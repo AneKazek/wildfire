@@ -14,7 +14,7 @@ import torch.nn.functional as F
 from torch.utils.data import DataLoader, Subset
 
 from .data import CHANNELS, FireDataset, split_indices
-from .losses import make_loss
+from .losses import make_loss, moment
 from .metrics import evaluate, sweep
 from .models import build_model
 from .prep import norm_for
@@ -113,6 +113,7 @@ def run(cfg: dict, run_name: str | None = None, out_dir: str | Path = "results/r
     train_idx = split_indices(root, "train", t.get("n_train"), seed=rng)
     criterion = make_loss(l)
     wb, wg = l.get("boundary_weight", 0.0), l.get("growth_weight", 0.0)
+    wm = l.get("moment_weight", 0.0)
     # Fork + copy-on-write makes an in-RAM copy per worker: a 100k subset is
     # 3.8 GB, i.e. ~38 GB across 10 workers, which the cgroup OOM-kills.
     in_mem = d.get("in_memory")
@@ -173,6 +174,8 @@ def run(cfg: dict, run_name: str | None = None, out_dir: str | Path = "results/r
             with torch.autocast("cuda", dtype=dtype, enabled=use_amp):
                 o = model(x)
                 loss = criterion(o["main"].float(), y, v)
+                if wm:
+                    loss = loss + wm * moment(o["main"].float(), y, v)
                 if wb and "boundary" in o:
                     loss = loss + wb * criterion(o["boundary"].float(), aux[:, 0:1], v)
                 if wg and "growth" in o:

@@ -5,7 +5,7 @@ import torch
 
 from wf.data import CHANNELS, _geo, dihedral, jac
 from wf.final import _geo as tgeo, _inv
-from wf.losses import lovasz_hinge, tversky, bce_dice
+from wf.losses import lovasz_hinge, tversky, bce_dice, moment
 from wf.metrics import evaluate, sweep
 from wf.models import Net
 
@@ -64,9 +64,29 @@ def test_losses_are_finite():
     logits = torch.randn(2, 1, 16, 16, requires_grad=True)
     y = (torch.rand(2, 1, 16, 16) > 0.9).float()
     v = torch.ones_like(y)
-    for loss in (bce_dice(logits, y, v), tversky(logits, y, v), lovasz_hinge(logits, y, v)):
+    for loss in (bce_dice(logits, y, v), tversky(logits, y, v), lovasz_hinge(logits, y, v),
+                 moment(logits, y, v)):
         assert torch.isfinite(loss)
         loss.backward(retain_graph=True)
+
+
+def test_moment_prefers_the_right_place_and_size():
+    """Moment term ~0 for the target itself; punished for a shifted or a
+    diffuse blob of comparable mass."""
+    y = torch.zeros(1, 1, 64, 64)
+    y[0, 0, 30:33, 30:33] = 1.0
+    v = torch.ones_like(y)
+    same = torch.logit(y.clamp(1e-4, 1 - 1e-4))
+    shifted = torch.zeros_like(y)
+    shifted[0, 0, 40:43, 40:43] = 1.0
+    diffuse = torch.full_like(y, 1e-4)
+    diffuse[0, 0, 24:38, 24:38] = 0.1
+    shifted = torch.logit(shifted.clamp(1e-4, 1 - 1e-4))
+    diffuse = torch.logit(diffuse.clamp(1e-4, 1 - 1e-4))
+    base = float(moment(same, y, v))
+    assert base < 0.02, base
+    assert float(moment(shifted, y, v)) > 10 * base
+    assert float(moment(diffuse, y, v)) > 10 * base
 
 
 def test_tta_inverse_undoes_transform():

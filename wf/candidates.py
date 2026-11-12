@@ -141,6 +141,12 @@ CANDIDATES: dict[str, dict] = {
     # --- round 3: precision-weighted objective (FP costs more than FN) ---
     "td_ptv": {**td(branches=["ht", "dct", "conv"], fusion="gate", width=16),
                "loss": {"name": "focal_tversky", "alpha": 0.7, "beta": 0.3, "gamma": 1.33}},
+
+    # --- round 3: moment-matching term (where the mass sits / how big it is) ---
+    "td_mom05": {**td(branches=["ht", "dct", "conv"], fusion="gate", width=16),
+                 "loss": {"name": "bce_dice", "pos_weight": 5.0, "moment_weight": 0.5}},
+    "td_mom10": {**td(branches=["ht", "dct", "conv"], fusion="gate", width=16),
+                 "loss": {"name": "bce_dice", "pos_weight": 5.0, "moment_weight": 1.0}},
 }
 
 # Cheapest-first-ish, likely winners on top: the deadline may cut the tail.
