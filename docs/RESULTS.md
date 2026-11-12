@@ -256,7 +256,7 @@ verified sample by sample, which is why none of these landed:
 
 | dataset | why not |
 |---|---|
-| `georgehulsey/modified-next-day-wildfire-spread` (7.5 GB) | Same task plus higher resolution and fuel embeddings — the only one with new *information*. Usable only if its shards preserve row order with ours (testable on one shard), otherwise the patches cannot be matched. Pretraining is not possible either: same 64×64 label semantics, so it is just more of the same data. |
+| `georgehulsey/modified-next-day-wildfire-spread` (7.1 GB) | Measured: still 64×64 (4096 px, same 1 km grid) and western-CONUS only (50/26/32 shards vs our 50/7/6), and its label is a *binary* VIIRS mask averaging ~152 fire px/patch vs our ~16 with classes 1–9 — a different label definition, so no row alignment and no pretraining value. Its extra inputs (fuel1–3, impervious, chili, gust_med, tmp_75, tmp_day, wind_75, wind_avg, bi, wdir) could only be recovered by matching patches across datasets: a standardised 8×8 elevation fingerprint of its 13 eval shards matches **0 of 10,512** of our eval patches (0% at 4×4/20 m; the 29% "match" at 2×2/50 m is just coarse terrain similarity). Dropped. |
 | `rufaiyusufzakari/enhanced-and-modified-next-day-wildfire-spread` (8.7 GB) | 19 features instead of 23: a de-featured copy. No upside. |
 | `z789456sx/ts-satfire`, `ehteshamashraf/wildfirespreadts` (48–76 GB) | Different sensors/grids (WildfireSpreadTS line); needs a new label pipeline, not a drop-in. |
 | `jacobhedenmalm/deepfire-wildfire-spread` (167 GB) | FIREMAP-100, different task framing and far too large for the available VM disk. |

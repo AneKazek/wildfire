@@ -88,6 +88,8 @@ def main() -> None:
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--resume", default=None, help="checkpoint to fine-tune from, e.g. a stage-1 best.pt")
     ap.add_argument("--tag", default="", help="suffix for the run dir, e.g. _seed1")
+    ap.add_argument("--lr", type=float, default=0.0, help="override the protocol lr (fine-tuning)")
+    ap.add_argument("--epochs", type=int, default=0, help="override the protocol epochs (fine-tuning)")
     args = ap.parse_args()
 
     dev = torch.device("cuda")
@@ -95,6 +97,10 @@ def main() -> None:
     root = "data/processed"
     cfg = make_cfg(args.name, args.stage)
     cfg["seed"] = args.seed
+    if args.lr:
+        cfg["train"]["lr"] = args.lr
+    if args.epochs:
+        cfg["train"].update(epochs=args.epochs, patience=args.epochs)
     run_name = f"{args.name}_s{args.stage}{args.tag}"
     out = Path(args.runs) / run_name
 
