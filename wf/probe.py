@@ -81,7 +81,7 @@ def main() -> None:
     disk_pre = np.zeros_like(base_masks)
     disk_both = np.zeros_like(base_masks)
     disk_peak = np.zeros_like(base_masks)
-    cen_err = [], []
+    cen_err = []
     for i in range(len(p)):
         m = base_masks[i]
         if not m.any():
