@@ -3,7 +3,7 @@
 import numpy as np
 import torch
 
-from wf.data import CHANNELS, _geo, dihedral, jac
+from wf.data import CHANNELS, PAIRS, _geo, dihedral, jac
 from wf.final import _geo as tgeo, _inv
 from wf.losses import lovasz_hinge, tversky, bce_dice, moment
 from wf.metrics import evaluate, evaluate_area, sweep, sweep_area, topk_masks
@@ -21,11 +21,12 @@ def test_dihedral_rotates_vector_channels():
     for k in range(8):
         J = jac(k)
         x = np.zeros((len(CHANNELS), n, n), np.float32)
-        x[3], x[4] = m, np.zeros((n, n), np.float32)  # u=east, v=0
+        u, v = PAIRS[0]
+        x[u], x[v] = m, np.zeros((n, n), np.float32)  # u=east, v=0
         out, _, _, _ = dihedral(x, np.zeros((n, n), np.float32), np.ones((n, n), np.float32),
                                 np.zeros((n, n), np.float32), k)
-        assert np.allclose(out[3], _geo(m, k) * J[0, 0]), k
-        assert np.allclose(out[4], _geo(m, k) * J[1, 0]), k
+        assert np.allclose(out[u], _geo(m, k) * J[0, 0]), k
+        assert np.allclose(out[v], _geo(m, k) * J[1, 0]), k
 
 
 def test_dihedral_target_matches_input():
@@ -43,11 +44,12 @@ def test_model_shapes():
         {"trunk": "unet", "widths": [16, 32], "depths": [1, 1]},
         {"trunk": "hrnet", "width": 8, "stages": 2},
     ]
-    x = torch.randn(2, len(CHANNELS), 64, 64)
+    x = torch.randn(2, 23, 64, 64)
+    m23, s23 = [0.0] * 23, [1.0] * 23
     for c in cfgs:
-        out = Net(c, MEAN, STD)(x)
+        out = Net(c, m23, s23)(x)
         assert out["main"].shape == (2, 1, 64, 64), c
-    out = Net({"trunk": "td", "branches": ["ht", "dct"], "area": 16}, MEAN, STD)(x)
+    out = Net({"trunk": "td", "branches": ["ht", "dct"], "area": 16}, m23, s23)(x)
     assert out["area"].shape == (2,), out
 
 
@@ -138,7 +140,7 @@ def test_spectral_block_is_identity_at_init():
 def test_pf_aug_keeps_mask_in_unit_range():
     from wf.data import PREV_FIRE, _pf_aug
 
-    x = np.zeros((23, 64, 64), np.float16)
+    x = np.zeros((len(CHANNELS), 64, 64), np.float16)
     x[PREV_FIRE][20:24, 20:24] = 1.0
     rng = np.random.default_rng(0)
     for mode in ("margin", "smooth", "both"):
@@ -178,13 +180,13 @@ def test_adaptive_threshold_beats_global_when_sizes_differ():
 
 def test_prep_channels_survive_dihedral():
     """Derived channels must be rotation scalars: aug-then-derive == derive-then-aug."""
-    from wf.prep import PREPS, extras
+    from wf.prep import DIST, PREPS, PREV, WINDS, extras
 
     rng = np.random.default_rng(0)
     x = rng.random((len(CHANNELS), 64, 64)).astype(np.float32) - 0.5
-    x[18] = (rng.random((64, 64)) > 0.8).astype(np.float32)   # prev_fire
-    x[20] = np.clip(rng.normal(0.5, 0.4, (64, 64)), -0.3, 1)  # fire_dist
-    x[10], x[11] = rng.normal(0, 1, (2, 64, 64))              # wind u, v
+    x[PREV] = (rng.random((64, 64)) > 0.8).astype(np.float32)   # prev_fire
+    x[DIST] = np.clip(rng.normal(0.5, 0.4, (64, 64)), -0.3, 1)  # fire_dist
+    x[WINDS[0]], x[WINDS[1]] = rng.normal(0, 1, (2, 64, 64))    # wind direction
 
     for name in PREPS:
         e = extras(x, name)
@@ -226,18 +228,52 @@ def test_soft_target_and_noscar_drop(tmp_path):
 
 def test_aniso_cone_follows_wind():
     """A 90-degree rotation error would still pass the equivariance test, so check the axis."""
-    from wf.prep import extras
+    from wf.prep import DIST, PREV, WINDS, extras
 
     x = np.zeros((len(CHANNELS), 64, 64), np.float32)
-    x[20] = 1.0
-    x[20][30:34, 30:34] = 0.0                     # small scar blob near the centre
-    x[18][30:34, 30:34] = 1.0                     # ... and it is the previous fire mask
+    x[DIST] = 1.0
+    x[DIST][30:34, 30:34] = 0.0                   # small scar blob near the centre
+    x[PREV][30:34, 30:34] = 1.0                   # ... and it is the previous fire mask
     yy, xx = np.mgrid[0:64, 0:64]
     for wind, axis, want in [((-1, 0), 1, 1),   # wind from the west -> spread along +x
                              ((0, -1), 0, 1),   # wind from the north -> spread along +y
                              ((1, 0), 1, 1)]:   # wind from the east -> spread along -x
-        x[10], x[11] = wind
+        x[WINDS[0]], x[WINDS[1]] = wind
         a = extras(x, "wind")[4].astype(np.float32)  # aniso
         var = [(a * (yy - 31.5) ** 2).sum() / a.sum(), (a * (xx - 31.5) ** 2).sum() / a.sum()]
         other = 1 - axis
         assert var[axis] > 2 * var[other], (wind, var)
+
+
+def test_tsf_patch_layout_and_centres():
+    """The TS-SatFire converter must emit the channel layout the cache declares."""
+    from wf.data import CHANNELS, PREV_FIRE
+    from wf.tsf import _centres, _channels
+
+    h = w = 128
+    day = np.full((8, h, w), 300.0, np.float32)
+    day[0:3] = 20.0
+    day[6, 40:50, 40:60] = np.nan          # active-fire temperature, NaN off fire
+    night = np.full((2, h, w), 290.0, np.float32)
+    aux = np.zeros((19, h, w), np.float32)
+    aux[10] = 180.0                         # aspect
+    aux[4] = 270.0                          # wind direction
+    aux[3] = 10.0                           # wind speed
+    aux[13] = 5.0                           # landcover
+    prev = np.zeros((h, w), bool)
+    prev[50:70, 50:70] = True
+
+    x = _channels(day, night, aux, prev, (30, 30))
+    assert x.shape == (len(CHANNELS), 64, 64), x.shape
+    assert np.isfinite(x).all()
+    assert x[PREV_FIRE].sum() == 20 * 20
+    assert abs(x[CHANNELS.index("wind_speed")].mean() - 10.0) < 1e-3
+    assert abs(x[CHANNELS.index("wind_dir_sin")].mean() + 1.0) < 1e-3  # 270 deg
+
+    new = np.zeros((h, w), bool)
+    new[60:64, 5:9] = True
+    boxes = _centres(new, k=4, rng=np.random.default_rng(0))
+    assert len(boxes) == 1, boxes           # one bucket, four pixels
+    r0, c0 = boxes[0]
+    assert 0 <= r0 <= h - 64 and 0 <= c0 <= w - 64
+    assert new[r0:r0 + 64, c0:c0 + 64].any()

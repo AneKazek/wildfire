@@ -22,7 +22,8 @@ from pathlib import Path
 import numpy as np
 from scipy import ndimage as ndi
 
-PREV, FRONT, DIST = 18, 19, 20  # feature indices
+PREV, FRONT, DIST = 28, 29, 30  # feature indices (see wf.data.CHANNELS)
+WINDS = (12, 13)  # wind direction as (sin, cos) of the "from" angle
 
 
 def _pf(x: np.ndarray) -> np.ndarray:
@@ -30,8 +31,8 @@ def _pf(x: np.ndarray) -> np.ndarray:
 
 
 def _unit(x: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Downwind unit vector: wind channels point where the wind comes from."""
-    u, v = -x[10].astype(np.float32), -x[11].astype(np.float32)
+    """Downwind unit vector: the wind channels point where the wind comes from."""
+    u, v = -x[WINDS[0]].astype(np.float32), -x[WINDS[1]].astype(np.float32)
     s = np.hypot(u, v) + 1e-6
     return u / s, v / s, s
 
@@ -107,15 +108,15 @@ def ch_ring2(x):
 
 
 def ch_pf_ndvi(x):
-    return (_pf(x) * x[0]).astype(np.float32)
+    return (_pf(x) * x[8]).astype(np.float32)
 
 
 def ch_pf_slope(x):
-    return (_pf(x) * x[2]).astype(np.float32)
+    return (_pf(x) * x[18]).astype(np.float32)
 
 
 def ch_pf_erc(x):
-    return (_pf(x) * x[17]).astype(np.float32)
+    return (_pf(x) * x[16]).astype(np.float32)
 
 
 CH = {f.__name__[3:]: f for f in [
@@ -138,8 +139,8 @@ PREPS: dict[str, list[str]] = {
     "dist": ["edt_in", "edt_out"],  # replaces the clipped fire_dist channel
 }
 
-# dropped base channels: near-constant or duplicated information
-DROPS: dict[str, list[int]] = {"nopop": [5, 6], "nocoord": [21, 22], "lean": [5, 6, 21, 22],
+# dropped base channels: coordinates carry no information for a per-pixel decision
+DROPS: dict[str, list[int]] = {"nocoord": [31, 32], "lean": [31, 32],
                                "nodist": [DIST], "noscar": [FRONT, DIST]}
 
 

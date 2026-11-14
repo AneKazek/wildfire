@@ -14,14 +14,18 @@ import torch
 from torch.utils.data import Dataset
 
 CHANNELS = [
-    "ndvi", "elevation", "slope", "aspect_sin", "aspect_cos", "population", "water",
-    "th_sin", "th_cos", "wind_speed", "wind_u", "wind_v", "tmmx", "tmmn", "sph",
-    "pr", "pdsi", "erc", "prev_fire", "fire_front", "fire_dist", "coord_x", "coord_y",
+    "i1", "i2", "i3", "i4", "i5", "m11", "night_i4", "night_i5", "ndvi", "evi2", "pr",
+    "wind_speed", "wind_dir_sin", "wind_dir_cos", "tmin", "tmax", "erc", "sph", "slope",
+    "aspect_sin", "aspect_cos", "elevation", "pdsi", "landcover", "fc_wind_speed",
+    "fc_dir_sin", "fc_dir_cos", "fc_temp", "prev_fire", "fire_front", "fire_dist",
+    "coord_x", "coord_y",
 ]
+NCH = len(CHANNELS)
 # (u, v) channel pairs that must rotate with the image during dihedral augmentation.
-PAIRS = ((3, 4), (10, 11))
-PREV_FIRE = 18
-DYNAMIC = {"th_sin", "th_cos", "wind_speed", "wind_u", "wind_v", "tmmx", "tmmn", "sph", "pr", "pdsi", "erc"}
+PAIRS = ((12, 13), (19, 20), (25, 26))
+PREV_FIRE = 28
+DYNAMIC = {"ndvi", "evi2", "pr", "wind_speed", "wind_dir_sin", "wind_dir_cos", "tmin", "tmax",
+           "erc", "sph", "fc_wind_speed", "fc_dir_sin", "fc_dir_cos", "fc_temp"}
 DYN_IDX = [CHANNELS.index(c) for c in CHANNELS if c in DYNAMIC]
 STA_IDX = [i for i in range(len(CHANNELS)) if i not in DYN_IDX]
 
@@ -101,7 +105,7 @@ def cache(base: str | Path, split: str = "train"):
         n = p.stat().st_size // (int(np.prod(tail)) * np.dtype(dtype).itemsize)
         return np.memmap(p, dtype=dtype, mode="r", shape=(n, *tail))
 
-    return (open_("features.f16", (23, 64, 64), np.float16),
+    return (open_("features.f16", (NCH, 64, 64), np.float16),
             open_("fire_class.u8", (64, 64), np.uint8),
             open_("prev_class.u8", (64, 64), np.uint8))
 

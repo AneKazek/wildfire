@@ -217,6 +217,26 @@ On the rebuilt cache, two cheap post-processing levers were tested and rejected:
   patches are smaller than 10 px and there a widened blob costs more than the softer
   edge buys.
 
+### Round 7: resolution and deep supervision on the TD trunk (rebuilt cache, stage 1)
+
+Same protocol as the control (50k samples, 12 epochs, lr 3e-3, 5k eval, threshold swept
+on eval). `ds` adds a 32×32 auxiliary head with weight 0.5; `hr` runs a 2× sub-pixel stem
+on the upsampled input so the head decides on a 128 lattice and its logits are average-
+pooled back to 64.
+
+| candidate | params | macro Dice | micro | IoU | AP | boundary F1 | hard Dice |
+|---|---|---|---|---|---|---|---|
+| `td_gate3` (control) | 1.041M | 0.4570 | 0.3811 | 0.2354 | 0.5836 | 0.8353 | 0.1261 |
+| `td_ds` | 1.045M | 0.4572 | 0.3855 | 0.2388 | 0.5747 | 0.8367 | 0.1269 |
+| `td_hr` | 1.047M | 0.4564 | 0.3748 | 0.2306 | 0.5740 | 0.8342 | 0.1152 |
+| `td_hr_ds`, fine-tuned 6 ep from the control's `best.pt` (lr 6e-4) | 1.051M | 0.4566 | 0.3725 | 0.2289 | 0.5767 | 0.8353 | 0.1238 |
+
+All three are ties with the control inside the ±0.005 screening band, so neither lever is
+promoted. Resolution fine-tuning cannot add information here: the cache *is* the native
+grid (64×64, 1 km), so a finer lattice only interpolates the same labels; and the measured
+centroid error is 1.24 px median (10.97 p90), i.e. a whole-pixel problem, not sub-pixel.
+Deep supervision likewise lands on a tie (0.4572) despite the +0.0034 IoU.
+
 ### Where the Dice actually goes (`wf.probe`, td_gate3_s1, thr 0.65, base 0.459)
 
 | decode | macro Dice |
