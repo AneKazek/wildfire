@@ -143,10 +143,15 @@ def _centres(new: np.ndarray, k: int, rng) -> list[tuple[int, int]]:
     return out
 
 
+def _by_date(d: Path) -> dict[str, Path]:
+    return {p.name.split("_")[0]: p for p in d.glob("*.tif")}
+
+
 def convert(roi_dir: Path, per_day: int, rng) -> tuple[list, list, list]:
-    days = [p for p in sorted((roi_dir / "VIIRS_Day").glob("*.tif"))
-            if (roi_dir / "FirePred" / p.name).exists()]
-    nights = {p.name: p for p in (roi_dir / "VIIRS_Night").glob("*.tif")}
+    days = sorted((roi_dir / "VIIRS_Day").glob("*.tif"))
+    nights = _by_date(roi_dir / "VIIRS_Night")
+    preds = _by_date(roi_dir / "FirePred")
+    days = [p for p in days if p.name.split("_")[0] in preds]
     if len(days) < 3:
         return [], [], []
     xs, fires, prevs = [], [], []
@@ -163,16 +168,16 @@ def convert(roi_dir: Path, per_day: int, rng) -> tuple[list, list, list]:
         if new.sum() < 8:
             cum = nxt
             continue
-        night = nights.get(f0.name)
+        key = f0.name.split("_")[0]
+        night = nights.get(key)
         if night is None:
             night = np.zeros((2, *shape), np.float32)
         else:
             night, nb, ns = _read(night)
             night = night[-2:] if night.shape[0] > 2 else night
             night = _on_grid(night, nb, ns, b, shape)
-        pred = roi_dir / "FirePred" / f0.name
-        aux = _read(pred)[0]
-        aux = _on_grid(aux, _read(pred)[1], _read(pred)[2], b, shape)
+        aux = _read(preds[key])
+        aux = _on_grid(aux[0], aux[1], aux[2], b, shape)
         prev = np.zeros(shape, bool) if cum is None else cum
         for box in _centres(new, per_day, rng):
             r0, c0 = box
