@@ -87,7 +87,7 @@ def _pf_aug(x: np.ndarray, mode: str, rng: np.random.Generator) -> None:
     if mode in ("smooth", "both"):
         from scipy import ndimage as ndi
 
-        for ch in (PREV_FIRE, 9):  # pre-fire mask, wind speed
+        for ch in (PREV_FIRE, CHANNELS.index("wind_speed")):  # pre-fire mask, wind speed
             a = x[ch].astype(np.float32)
             x[ch] = (0.5 * (ndi.gaussian_filter(a, 0.4) + ndi.gaussian_filter(a, 0.8))).astype(np.float16)
 

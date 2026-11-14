@@ -94,7 +94,7 @@ def main() -> None:
 
     dev = torch.device("cuda")
     dtype = torch.bfloat16
-    root = "data/processed"
+    root = "data/tsf"
     cfg = make_cfg(args.name, args.stage)
     cfg["seed"] = args.seed
     if args.lr:

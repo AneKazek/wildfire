@@ -11,14 +11,14 @@ import copy
 
 PROTOCOLS = {
     1: {"n_train": 50000, "epochs": 12, "lr": 3e-3, "batch_size": 384, "warmup_epochs": 1,
-        "max_seconds": 900, "patience": 99, "abort_below": 0.33, "abort_after": 4, "eval_n": 5000},
+        "max_seconds": 900, "patience": 99, "eval_n": 5000},
     2: {"n_train": 100000, "epochs": 30, "lr": 2.5e-3, "batch_size": 384, "warmup_epochs": 2,
         "patience": 10},
     3: {"n_train": None, "epochs": 36, "lr": 2.2e-3, "batch_size": 384, "warmup_epochs": 2, "patience": 8},
 }
 
 BASE = {
-    "data": {"root": "data/processed", "prev_dropout": 0.2},
+    "data": {"root": "data/tsf", "prev_dropout": 0.2},
     "loss": {"name": "bce_dice", "pos_weight": 5.0, "dice_weight": 1.0},
     "train": {"weight_decay": 1e-4, "amp": "bf16", "grad_clip": 1.0, "workers": 10, "eval_workers": 4,
               "ema_decay": 0.999},
@@ -36,7 +36,7 @@ def smp_up(arch: str, encoder: str, up: int, **kw) -> dict:
 def pv(prep: str, drop: str = "") -> dict:
     """Same trunk as the winner, only the input preprocessing changes."""
     return {**smp("UnetPlusPlus", "resnet18"),
-            "data": {"root": "data/processed", "prev_dropout": 0.2, "prep": prep, "drop": drop}}
+            "data": {"root": "data/tsf", "prev_dropout": 0.2, "prep": prep, "drop": drop}}
 
 
 def td(**kw) -> dict:
@@ -99,8 +99,8 @@ CANDIDATES: dict[str, dict] = {
     "smp_unet_r18_ftl": {**smp("Unet", "resnet18"),
                          "loss": {"name": "focal_tversky", "alpha": 0.4, "beta": 0.6, "gamma": 1.33}},
     "smp_unet_r18_lovasz": {**smp("Unet", "resnet18"), "loss": {"name": "lovasz"}},
-    "smp_unet_r18_drop4": {**smp("Unet", "resnet18"), "data": {"root": "data/processed", "prev_dropout": 0.4}},
-    "smp_unet_r18_drop0": {**smp("Unet", "resnet18"), "data": {"root": "data/processed", "prev_dropout": 0.0}},
+    "smp_unet_r18_drop4": {**smp("Unet", "resnet18"), "data": {"root": "data/tsf", "prev_dropout": 0.4}},
+    "smp_unet_r18_drop0": {**smp("Unet", "resnet18"), "data": {"root": "data/tsf", "prev_dropout": 0.0}},
 
     # --- preprocessing sweep: identical trunk, different input channels ---
     "pp_lean": pv("base", "lean"),
@@ -122,21 +122,21 @@ CANDIDATES: dict[str, dict] = {
                         heads=["main", "boundary", "growth"]),
                    "loss": {"name": "bce_dice", "pos_weight": 5.0, "boundary_weight": 0.3, "growth_weight": 0.3}},
     "td_gate_pf": {**td(branches=["ht", "dct"], fusion="gate", width=16),
-                   "data": {"root": "data/processed", "prev_dropout": 0.2, "pf_aug": "both"}},
+                   "data": {"root": "data/tsf", "prev_dropout": 0.2, "pf_aug": "both"}},
 
     # --- round 2: soft labels / scar-channel ablations / physics channels ---
     "td_gate3_soft8": {**td(branches=["ht", "dct", "conv"], fusion="gate", width=16),
-                       "data": {"root": "data/processed", "prev_dropout": 0.2, "soft": 0.8}},
+                       "data": {"root": "data/tsf", "prev_dropout": 0.2, "soft": 0.8}},
     "td_gate3_soft15": {**td(branches=["ht", "dct", "conv"], fusion="gate", width=16),
-                        "data": {"root": "data/processed", "prev_dropout": 0.2, "soft": 1.5}},
+                        "data": {"root": "data/tsf", "prev_dropout": 0.2, "soft": 1.5}},
     "td_gate3_noscar": {**td(branches=["ht", "dct", "conv"], fusion="gate", width=16),
-                        "data": {"root": "data/processed", "prev_dropout": 0.2, "drop": "noscar"}},
+                        "data": {"root": "data/tsf", "prev_dropout": 0.2, "drop": "noscar"}},
     "td_gate3_scarwind": {**td(branches=["ht", "dct", "conv"], fusion="gate", width=16),
-                          "data": {"root": "data/processed", "prev_dropout": 0.2, "prep": "scarwind"}},
+                          "data": {"root": "data/tsf", "prev_dropout": 0.2, "prep": "scarwind"}},
     "td_gate3_ftl": {**td(branches=["ht", "dct", "conv"], fusion="gate", width=16),
                      "loss": {"name": "focal_tversky", "alpha": 0.4, "beta": 0.6, "gamma": 1.33}},
     "td_gate3_pf": {**td(branches=["ht", "dct", "conv"], fusion="gate", width=16),
-                    "data": {"root": "data/processed", "prev_dropout": 0.2, "pf_aug": "both"}},
+                    "data": {"root": "data/tsf", "prev_dropout": 0.2, "pf_aug": "both"}},
 
     # --- round 3: precision-weighted objective (FP costs more than FN) ---
     "td_ptv": {**td(branches=["ht", "dct", "conv"], fusion="gate", width=16),
