@@ -270,6 +270,10 @@ def test_tsf_patch_layout_and_centres():
     assert abs(x[CHANNELS.index("wind_speed")].mean() - 10.0) < 1e-3
     assert abs(x[CHANNELS.index("wind_dir_sin")].mean() + 1.0) < 1e-3  # 270 deg
 
+    from wf.tsf import _on_grid
+    coarse = np.arange(2 * 10 * 12, dtype=np.float32).reshape(2, 10, 12)
+    assert _on_grid(coarse, (10, 12), (16, 19)).shape == (2, 16, 19)
+
     new = np.zeros((h, w), bool)
     new[60:64, 5:9] = True
     boxes = _centres(new, k=4, rng=np.random.default_rng(0))

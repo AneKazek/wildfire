@@ -27,6 +27,7 @@ from __future__ import annotations
 import argparse
 import csv
 import shutil
+from multiprocessing import Pool
 from pathlib import Path
 
 import numpy as np
@@ -201,6 +202,16 @@ def _split_ids(roi_csv: Path, cache: Path) -> dict[str, list[str]]:
     return {"train": train, "eval": sorted(VAL), "test": test}
 
 
+def _job(spec: tuple[str, int, int]) -> tuple[str, list, list, list]:
+    roi, per_day, seed = spec
+    try:
+        xs, fires, prevs = convert(Path(roi), per_day, np.random.default_rng(seed))
+        return Path(roi).name, xs, fires, prevs
+    except Exception as exc:  # a truncated tif should cost one ROI, not the run
+        print("fail", roi, repr(exc)[:140], flush=True)
+        return Path(roi).name, [], [], []
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--download", action="store_true", help="fetch every VIIRS/FirePred tif (~40 GB)")
@@ -209,6 +220,7 @@ def main() -> None:
     ap.add_argument("--roi-csv", default=None, help="dir with fire_all.csv (default <cache>/roi)")
     ap.add_argument("--per-day", type=int, default=16)
     ap.add_argument("--limit", type=int, default=0, help="only this many ROIs per split")
+    ap.add_argument("--workers", type=int, default=4)
     ap.add_argument("--keep", action="store_true", help="do not delete tifs after converting")
     args = ap.parse_args()
 
@@ -226,26 +238,23 @@ def main() -> None:
 
     rng = np.random.default_rng(0)
     splits = _split_ids(Path(args.roi_csv or cache / "roi"), cache)
-    for split, ids in splits.items():
-        if args.limit:
-            ids = ids[: args.limit]
-        n0 = _count(args.out, split)
-        for roi in ids:
-            d = cache / "ts-satfire" / roi
-            if not (d / "VIIRS_Day").exists():
-                print("missing", split, roi, flush=True)
-                continue
-            try:
-                xs, fires, prevs = convert(d, args.per_day, rng)
-            except Exception as exc:  # a truncated tif should cost one ROI, not the run
-                print("fail", split, roi, repr(exc)[:140], flush=True)
-                continue
+    pairs = [(s, r) for s in ("train", "eval", "test") for r in splits[s]]
+    if args.limit:
+        keep = {(s, r) for s in splits for r in splits[s][: args.limit]}
+        pairs = [p for p in pairs if p in keep]
+    todo = [p for p in pairs if (cache / "ts-satfire" / p[1] / "VIIRS_Day").exists()]
+    print(f"{len(pairs)} ROIs, {len(pairs) - len(todo)} missing on disk", flush=True)
+    jobs = [(str(cache / "ts-satfire" / r), args.per_day, int(rng.integers(1 << 30))) for _, r in todo]
+    with Pool(args.workers) as pool:
+        for i, ((split, roi), (_, xs, fires, prevs)) in enumerate(zip(todo, pool.imap(_job, jobs, 1))):
             if xs:
                 _flush(args.out, split, xs, fires, prevs)
             if not args.keep:
-                shutil.rmtree(d, ignore_errors=True)
-            print(f"{split} {roi}: {len(xs)} rows, total {_count(args.out, split)}", flush=True)
-        print(f"{split}: {_count(args.out, split) - n0} rows from {len(ids)} ROIs", flush=True)
+                shutil.rmtree(cache / "ts-satfire" / roi, ignore_errors=True)
+            if (i + 1) % 10 == 0 or i + 1 == len(todo):
+                print(f"[{i + 1}/{len(todo)}] {split} {roi}: {len(xs)} rows", flush=True)
+    for split in ("train", "eval", "test"):
+        print(f"{split}: {_count(args.out, split)} rows", flush=True)
 
     _write_norm(args.out)
 

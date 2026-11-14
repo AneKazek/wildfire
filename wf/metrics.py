@@ -129,7 +129,7 @@ def sweep_area(prob: np.ndarray, k, tgt: np.ndarray, valid: np.ndarray,
 
 
 def sweep(prob: np.ndarray, tgt: np.ndarray, valid: np.ndarray, thrs=None) -> tuple[float, list]:
-    thrs = np.arange(0.30, 0.86, 0.05) if thrs is None else thrs
+    thrs = np.arange(0.20, 0.86, 0.05) if thrs is None else thrs
     rows = [(float(t), float(dice_per_sample((prob > t) & valid, tgt & valid).mean())) for t in thrs]
     best = max(rows, key=lambda r: r[1])
     return best[0], rows
