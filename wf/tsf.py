@@ -59,18 +59,17 @@ def _read(path: Path):
         return r.read().astype(np.float32), r.bounds, r.shape
 
 
-def _on_grid(a, src_bounds, src_shape, dst_bounds, dst_shape):
+def _on_grid(a, src_shape, dst_shape):
+    """Resample a layer onto the day grid. The layers share bounds, so a plain
+    resize is the right transform; the tifs carry no usable affine to warp with."""
     if src_shape == dst_shape:
         return a
-    import rasterio as rio
-    from rasterio.warp import Resampling, reproject
-
-    out = np.empty((a.shape[0], *dst_shape), np.float32)
-    st = rio.transform.from_bounds(*src_bounds, src_shape[1], src_shape[0])
-    dt = rio.transform.from_bounds(*dst_bounds, dst_shape[1], dst_shape[0])
-    for i, band in enumerate(a):
-        reproject(band, out[i], src_transform=st, dst_transform=dt, resampling=Resampling.bilinear)
-    return out
+    zy, zx = dst_shape[0] / src_shape[0], dst_shape[1] / src_shape[1]
+    out = np.stack([ndi.zoom(b, (zy, zx), order=1) for b in a])
+    padded = np.zeros((a.shape[0], *dst_shape), np.float32)
+    h, w = min(out.shape[1], dst_shape[0]), min(out.shape[2], dst_shape[1])
+    padded[:, :h, :w] = out[:, :h, :w]
+    return padded
 
 
 def _fill(a: np.ndarray) -> np.ndarray:
@@ -175,9 +174,9 @@ def convert(roi_dir: Path, per_day: int, rng) -> tuple[list, list, list]:
         else:
             night, nb, ns = _read(night)
             night = night[-2:] if night.shape[0] > 2 else night
-            night = _on_grid(night, nb, ns, b, shape)
+            night = _on_grid(night, ns, shape)
         aux = _read(preds[key])
-        aux = _on_grid(aux[0], aux[1], aux[2], b, shape)
+        aux = _on_grid(aux[0], aux[2], shape)
         prev = np.zeros(shape, bool) if cum is None else cum
         for box in _centres(new, per_day, rng):
             r0, c0 = box
