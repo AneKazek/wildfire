@@ -125,11 +125,11 @@ def run(cfg: dict, run_name: str | None = None, out_dir: str | Path = "results/r
     wm = l.get("moment_weight", 0.0)
     wa = l.get("area_weight", 0.0)
     wds = l.get("ds_weight", 0.0)
-    # Fork + copy-on-write makes an in-RAM copy per worker: a 100k subset is
-    # 3.8 GB, i.e. ~38 GB across 10 workers, which the cgroup OOM-kills.
+    # Fork + copy-on-write makes an in-RAM copy per worker, so the budget is
+    # per-dataset, not per-row: a 19 GB subset across 10 workers is OOM-killed.
     in_mem = d.get("in_memory")
     if in_mem is None:
-        in_mem = len(train_idx) <= 30000
+        in_mem = len(train_idx) * len(CHANNELS) * 64 * 64 * 2 <= 4e9
     tr_ds = FireDataset(root, "train", train_idx, augment=True, prev_dropout=d.get("prev_dropout", 0.2),
                         seed=rng, aux=bool(wb or wg), in_memory=in_mem, prep=prep, drop=drop,
                         pf_aug=d.get("pf_aug", ""), soft=float(d.get("soft", 0.0)))
