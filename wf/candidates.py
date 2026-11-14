@@ -157,6 +157,10 @@ CANDIDATES: dict[str, dict] = {
     "td_w8": td(branches=["ht", "dct", "conv"], fusion="gate", width=8),
     "td_d3": td(branches=["ht", "dct", "conv"], fusion="gate", width=16, depth=3),
 
+    # --- round 8 (TS-SatFire): the 4-scale trunk wins, combine it ---
+    "td_4s_attn": td(branches=["ht", "dct", "conv"], fusion="gate", width=16,
+                     sizes=(64, 32, 16, 8), attn=True),
+
     # --- round 5: explicit area head + top-k decode (the measured bottleneck) ---
     "td_area": {**td(branches=["ht", "dct", "conv"], fusion="gate", width=16, area=32),
                 "loss": {"name": "bce_dice", "pos_weight": 5.0, "area_weight": 1.0}},
