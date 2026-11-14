@@ -10,8 +10,8 @@ from __future__ import annotations
 import copy
 
 PROTOCOLS = {
-    1: {"n_train": 50000, "epochs": 12, "lr": 3e-3, "batch_size": 384, "warmup_epochs": 1,
-        "max_seconds": 900, "patience": 99, "eval_n": 5000},
+    1: {"n_train": 50000, "epochs": 30, "lr": 3e-3, "batch_size": 384, "warmup_epochs": 2,
+        "max_seconds": 1500, "patience": 99, "eval_n": 5000},
     2: {"n_train": 100000, "epochs": 30, "lr": 2.5e-3, "batch_size": 384, "warmup_epochs": 2,
         "patience": 10},
     3: {"n_train": None, "epochs": 36, "lr": 2.2e-3, "batch_size": 384, "warmup_epochs": 2, "patience": 8},
