@@ -184,14 +184,16 @@ def convert(roi_dir: Path, per_day: int, rng) -> tuple[list, list, list]:
     return xs, fires, prevs
 
 
-def _split_ids(roi_csv: Path) -> dict[str, list[str]]:
+def _split_ids(roi_csv: Path, cache: Path) -> dict[str, list[str]]:
     def ids(name):
         with (roi_csv / name).open(newline="") as f:
             return [r["Id"] for r in csv.DictReader(f)]
 
-    train_all = ids("fire_all.csv")
     test = ids("fire_all_test.csv")
-    train = [i for i in train_all if i not in VAL]
+    # every ROI on disk that is not held out, so the fires missing from the csv
+    # lists (the card says 179 events, the lists cover 162) still train
+    on_disk = sorted(p.name for p in (cache / "ts-satfire").iterdir() if p.is_dir())
+    train = [i for i in on_disk if i not in VAL and i not in set(test)]
     return {"train": train, "eval": sorted(VAL), "test": test}
 
 
@@ -219,7 +221,7 @@ def main() -> None:
     from .build import _count, _flush, _write_norm
 
     rng = np.random.default_rng(0)
-    splits = _split_ids(Path(args.roi_csv or cache / "roi"))
+    splits = _split_ids(Path(args.roi_csv or cache / "roi"), cache)
     for split, ids in splits.items():
         if args.limit:
             ids = ids[: args.limit]
@@ -229,7 +231,11 @@ def main() -> None:
             if not (d / "VIIRS_Day").exists():
                 print("missing", split, roi, flush=True)
                 continue
-            xs, fires, prevs = convert(d, args.per_day, rng)
+            try:
+                xs, fires, prevs = convert(d, args.per_day, rng)
+            except Exception as exc:  # a truncated tif should cost one ROI, not the run
+                print("fail", split, roi, repr(exc)[:140], flush=True)
+                continue
             if xs:
                 _flush(args.out, split, xs, fires, prevs)
             if not args.keep:
