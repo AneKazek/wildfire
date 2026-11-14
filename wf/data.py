@@ -14,7 +14,7 @@ import torch
 from torch.utils.data import Dataset
 
 CHANNELS = [
-    "i1", "i2", "i3", "i4", "i5", "m11", "night_i4", "night_i5", "ndvi", "evi2", "pr",
+    "i1", "i2", "i3", "i4", "i5", "m11", "night_i4", "night_i5", "ndvi", "evi2", "precip",
     "wind_speed", "wind_dir_sin", "wind_dir_cos", "tmin", "tmax", "erc", "sph", "slope",
     "aspect_sin", "aspect_cos", "elevation", "pdsi", "landcover", "fc_wind_speed",
     "fc_dir_sin", "fc_dir_cos", "fc_temp", "prev_fire", "fire_front", "fire_dist",
@@ -24,7 +24,7 @@ NCH = len(CHANNELS)
 # (u, v) channel pairs that must rotate with the image during dihedral augmentation.
 PAIRS = ((12, 13), (19, 20), (25, 26))
 PREV_FIRE = 28
-DYNAMIC = {"ndvi", "evi2", "pr", "wind_speed", "wind_dir_sin", "wind_dir_cos", "tmin", "tmax",
+DYNAMIC = {"ndvi", "evi2", "precip", "wind_speed", "wind_dir_sin", "wind_dir_cos", "tmin", "tmax",
            "erc", "sph", "fc_wind_speed", "fc_dir_sin", "fc_dir_cos", "fc_temp"}
 DYN_IDX = [CHANNELS.index(c) for c in CHANNELS if c in DYNAMIC]
 STA_IDX = [i for i in range(len(CHANNELS)) if i not in DYN_IDX]

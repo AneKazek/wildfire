@@ -45,9 +45,9 @@ VAL = {"20568194", "20701026", "20562846", "20700973", "24462610", "24462788", "
 AUX = dict(ndvi=0, evi2=1, pr=2, ws=3, wdir=4, tmin=5, tmax=6, erc=7, sph=8, slope=9,
            aspect=10, elev=11, pdsi=12, lulc=13, pr_sum=14, fws=15, fdir=16, ftmp=17, fsph=18)
 CLIP = {"pr": (0, 100), "pr_sum": (0, 300), "ws": (0, 60), "fws": (0, 60), "tmin": (180, 340),
-        "tmax": (180, 350), "ftmp": (180, 350), "erc": (0, 150), "sph": (0, 0.06),
-        "fsph": (0, 0.06), "slope": (0, 2.0), "elev": (0, 5000), "pdsi": (-10, 10),
-        "lulc": (1, 17)}
+        "tmax": (180, 350), "ftmp": (0, 60), "erc": (0, 150), "sph": (0, 0.06),
+        "fsph": (0, 0.06), "slope": (0, 60), "elev": (0, 5000), "pdsi": (-10, 10),
+        "lulc": (1, 17)}  # slope is degrees, ftmp is Celsius in this copy
 SIZE = 64
 STRIDE = 16  # centre-bucket size when picking distinct crops, in pixels
 
@@ -114,7 +114,7 @@ def _channels(day, night, aux, prev, box):
     dist = np.clip(np.where(p > 0.5, -inside, outside) * 0.1, -0.3, 1.0)
     return np.stack([
         d[0], d[1], d[2], d[3], d[4], d[5], n[0], n[1],
-        ndvi, evi2, _band(a, "pr"), ws, wd_s, wd_c,
+        ndvi, evi2, _band(a, "pr_sum"), ws, wd_s, wd_c,
         _band(a, "tmin"), _band(a, "tmax"), _band(a, "erc"), _band(a, "sph"),
         _band(a, "slope"), asp_s, asp_c, _band(a, "elev"), _band(a, "pdsi"), _band(a, "lulc"),
         _band(a, "fws"), fd_s, fd_c, _band(a, "ftmp"),
