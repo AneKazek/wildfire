@@ -242,9 +242,17 @@ def _write_norm(out) -> None:
 
     x = cache(out, "train")[0]
     idx = np.random.default_rng(0).choice(len(x), min(20000, len(x)), replace=False)
-    block = np.stack([np.asarray(x[i], dtype=np.float32) for i in idx])
-    mean = block.mean((0, 2, 3)).tolist()
-    std = np.maximum(block.std((0, 2, 3)), 1e-3).tolist()
+    sums, squares, count = np.zeros(x.shape[1]), np.zeros(x.shape[1]), 0
+    for start in range(0, len(idx), 32):
+        block = np.asarray(x[idx[start:start + 32]], dtype=np.float64)
+        if not np.isfinite(block).all():
+            raise ValueError("Nonfinite cached features; inspect source bands before training")
+        sums += block.sum((0, 2, 3))
+        squares += (block ** 2).sum((0, 2, 3))
+        count += block.shape[0] * block.shape[2] * block.shape[3]
+    mean_array = sums / count
+    mean = mean_array.tolist()
+    std = np.maximum(np.sqrt(np.maximum(squares / count - mean_array ** 2, 0)), 1e-3).tolist()
     (Path(out) / "norm.json").write_text(json.dumps({"mean": mean, "std": std}, indent=1))
     print("norm.json written", flush=True)
 

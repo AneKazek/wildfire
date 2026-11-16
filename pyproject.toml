@@ -1,7 +1,7 @@
 [project]
 name = "wf"
 version = "0.1.0"
-description = "Next-day wildfire spread: staged architecture search on the cached 23-channel patches"
+description = "WildfireTD4: four-scale custom wildfire progression segmentation with focal Tversky loss"
 requires-python = ">=3.10"
 dependencies = [
     "numpy",
@@ -12,3 +12,11 @@ dependencies = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[project.optional-dependencies]
+external = ["pandas", "pyarrow", "rasterio", "pytest"]
+test = ["pytest"]
+comparisons = ["segmentation-models-pytorch", "timm", "pandas"]
+
+[project.scripts]
+wildfire = "wf.__main__:main"

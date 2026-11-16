@@ -69,12 +69,19 @@ class EMA:
             model.load_state_dict(backup)
 
 
-def _loader(ds, bs: int, shuffle: bool, workers: int) -> DataLoader:
+def _seed_worker(_worker_id):
+    info = torch.utils.data.get_worker_info()
+    if hasattr(info.dataset, "rng"):
+        info.dataset.rng = np.random.default_rng(info.seed % (2 ** 32))
+
+
+def _loader(ds, bs: int, shuffle: bool, workers: int, seed: int = 0) -> DataLoader:
     # Persistent workers: re-spawning 10 forks every epoch cost ~25 s per epoch,
     # which dominated short screening runs.
     return DataLoader(ds, batch_size=bs, shuffle=shuffle, num_workers=workers, pin_memory=False,
                       drop_last=shuffle, persistent_workers=workers > 0,
-                      prefetch_factor=4 if workers else None)
+                      prefetch_factor=2 if workers else None,
+                      generator=torch.Generator().manual_seed(seed), worker_init_fn=_seed_worker)
 
 
 @torch.no_grad()
@@ -110,6 +117,8 @@ def run(cfg: dict, run_name: str | None = None, out_dir: str | Path = "results/r
     name = run_name or cfg.get("name", "run")
     dev = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     dtype = torch.bfloat16 if t.get("amp", "bf16") in (True, "bf16") else torch.float16
+    if dev.type == "cuda" and dtype == torch.bfloat16 and not torch.cuda.is_bf16_supported():
+        dtype = torch.float16
     use_amp = dev.type == "cuda" and bool(t.get("amp", True))
 
     model, prep, drop = build(cfg, root)
@@ -140,9 +149,13 @@ def run(cfg: dict, run_name: str | None = None, out_dir: str | Path = "results/r
     ev_ds = FireDataset(root, "eval", ev_idx, augment=False, aux=False, in_memory=len(ev_idx) <= 30000,
                         prep=prep, drop=drop,
                         ext=load_ext(root, "eval") if int(m.get("late", 0)) else None)
-    bs = int(t.get("batch_size", 256))
-    tr_ld = _loader(tr_ds, bs, True, int(t.get("workers", 8)))
-    ev_ld = _loader(ev_ds, 512, False, int(t.get("eval_workers", 4)))
+    if int(m.get("late", 0)):
+        for split, ds in (("train", tr_ds), ("eval", ev_ds)):
+            if ds.ext is None or ds.ext.shape[1] != int(m["late"]):
+                raise ValueError(f"{split}: missing or incompatible ext.npy for late fusion")
+    bs = min(int(t.get("batch_size", 256)), len(tr_ds))
+    tr_ld = _loader(tr_ds, bs, True, int(t.get("workers", 8)), seed=rng)
+    ev_ld = _loader(ev_ds, int(t.get("eval_batch_size", 128)), False, int(t.get("eval_workers", 4)))
     print(f"RUN {name} params={nparam/1e6:.2f}M n_train={len(train_idx)} n_eval={len(ev_idx)} "
           f"epochs={int(t.get('epochs', 10))} bs={bs}", flush=True)
 
@@ -225,6 +238,10 @@ def run(cfg: dict, run_name: str | None = None, out_dir: str | Path = "results/r
             prob, tg, va, ar = predict(model, ev_ld, dev, dtype)
         mt = (evaluate_area(prob, np.expm1(ar), tg, va, full=False) if ar is not None
               else evaluate(prob, tg, va, 0.5, full=False))
+        checkpoint_thr = 0.5
+        if t.get("checkpoint_sweep") and ar is None:
+            checkpoint_thr, _ = sweep(prob, tg, va)
+            mt = evaluate(prob, tg, va, checkpoint_thr, full=False)
         t_eval = time.time() - t_eval
         row = {"epoch": epoch, "loss": float(np.mean(losses)), "train_sps": int(seen / dt),
                "lr": opt.param_groups[0]["lr"], **{f"val_{k}": v for k, v in mt.items()},
@@ -232,7 +249,7 @@ def run(cfg: dict, run_name: str | None = None, out_dir: str | Path = "results/r
                "minutes": round((time.time() - t_start) / 60, 1)}
         history.append(row)
         if mt["macro_dice"] > best["macro_dice"]:
-            best = {**mt, "epoch": epoch, "thr": 0.5}
+            best = {**mt, "epoch": epoch, "thr": checkpoint_thr}
             t_save = time.time()
             torch.save({"model": ema.shadow, "cfg": cfg, "metrics": best, "epoch": epoch,
                         "params": nparam}, out / "best.pt")
@@ -255,7 +272,7 @@ def run(cfg: dict, run_name: str | None = None, out_dir: str | Path = "results/r
         model.load_state_dict(torch.load(ckpt, map_location=dev)["model"], strict=False)
     full_ds = FireDataset(root, "eval", None, aux=False, prep=prep, drop=drop,
                           ext=load_ext(root, "eval") if int(m.get("late", 0)) else None)
-    prob, tg, va, ar = predict(model, _loader(full_ds, 512, False, 4), dev, dtype)
+    prob, tg, va, ar = predict(model, _loader(full_ds, int(t.get("eval_batch_size", 128)), False, int(t.get("eval_workers", 4))), dev, dtype)
     if ar is not None:
         thr, rows = sweep_area(prob, np.expm1(ar), tg, va)
         full = evaluate_area(prob, np.expm1(ar) * thr, tg, va, full=True)

@@ -153,7 +153,9 @@ class FireDataset(Dataset):
         self.drop = drop
         self.pf_aug = pf_aug
         self.soft = soft
-        self.ext = ext
+        if ext is not None and (ext.ndim != 2 or len(ext) != len(fire) or not np.isfinite(ext).all()):
+            raise ValueError("External features must be finite and aligned with all cache rows")
+        self.ext = ext[sel] if ext is not None and in_memory else ext
         self.rng = np.random.default_rng(seed)
 
     def __len__(self) -> int:

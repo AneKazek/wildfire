@@ -1,0 +1,16 @@
+{
+  "id": "REPLACE_USERNAME/wildfire-weather-late-fusion",
+  "title": "Wildfire weather late fusion",
+  "code_file": "run_latefusion.py",
+  "language": "python",
+  "kernel_type": "script",
+  "is_private": true,
+  "enable_gpu": true,
+  "enable_internet": true,
+  "dataset_sources": [
+    "z789456sx/ts-satfire",
+    "dianatofficial/global-daily-weather-1950-2026-analysis-layer"
+  ],
+  "competition_sources": [],
+  "kernel_sources": []
+}

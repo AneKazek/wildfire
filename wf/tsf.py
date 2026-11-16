@@ -161,11 +161,16 @@ def convert(roi_dir: Path, per_day: int, rng) -> tuple[list, list, list, list]:
         f0, f1 = days[i], days[i + 1]
         day0, b, shape = _read(f0) if cur is None else cur
         day1, b1, s1 = _read(f1)
+        if cum is None:
+            cum = np.isfinite(day0[6]) | (np.nan_to_num(day0[7]) > 0)
+        from datetime import datetime
+        delta = (datetime.strptime(f1.name.split("_")[0].replace("-", ""), "%Y%m%d") -
+                 datetime.strptime(f0.name.split("_")[0].replace("-", ""), "%Y%m%d")).days
         m1 = (~np.isnan(day1[6])) | (np.nan_to_num(day1[7]) > 0)
         nxt = m1 if cum is None else (cum | m1)
         new = nxt if cum is None else (nxt & ~cum)
         cur = (day1, b1, s1)
-        if new.sum() < 8:
+        if delta != 1 or min(shape) < SIZE or new.sum() < 8:
             cum = nxt
             continue
         key = f0.name.split("_")[0]
@@ -202,7 +207,12 @@ def _split_ids(roi_csv: Path, cache: Path) -> dict[str, list[str]]:
     # every ROI on disk that is not held out, so the fires missing from the csv
     # lists (the card says 179 events, the lists cover 162) still train
     on_disk = sorted(p.name for p in (cache / "ts-satfire").iterdir() if p.is_dir())
-    train = [i for i in on_disk if i not in VAL and i not in set(test)]
+    train_csvs = [roi_csv / f"us_fire_{year}_out_new.csv" for year in (2017, 2018, 2019, 2020)]
+    if all(p.exists() for p in train_csvs):
+        official = {i for p in train_csvs for i in ids(p.name)}
+        train = [i for i in on_disk if i in official and i not in VAL and i not in set(test)]
+    else:
+        train = [i for i in on_disk if i not in VAL and i not in set(test)]
     return {"train": train, "eval": sorted(VAL), "test": test}
 
 
@@ -226,10 +236,13 @@ def main() -> None:
     ap.add_argument("--limit", type=int, default=0, help="only this many ROIs per split")
     ap.add_argument("--workers", type=int, default=4)
     ap.add_argument("--keep", action="store_true", help="do not delete tifs after converting")
+    ap.add_argument("--splits", default="train,eval,test")
     args = ap.parse_args()
 
     cache = Path(args.cache)
-    if args.download or not (cache / "roi").exists():
+    if not args.download and not (cache / "ts-satfire").is_dir():
+        raise FileNotFoundError(f"Expected attached dataset at {cache}/ts-satfire; use --cache to select its parent")
+    if args.download:
         from huggingface_hub import snapshot_download
 
         snapshot_download(REPO, repo_type="dataset", local_dir=str(cache),
@@ -240,9 +253,13 @@ def main() -> None:
 
     from .build import _count, _flush, _write_norm
 
+    if any(Path(args.out).glob("*/features.f16")):
+        raise FileExistsError("Output cache already exists; select a fresh --out to avoid duplicate rows")
+    args.keep = args.keep or str(cache.resolve()).startswith("/kaggle/input")
     rng = np.random.default_rng(0)
     splits = _split_ids(Path(args.roi_csv or cache / "roi"), cache)
-    pairs = [(s, r) for s in ("train", "eval", "test") for r in splits[s]]
+    selected_splits = args.splits.split(',')
+    pairs = [(s, r) for s in selected_splits for r in splits[s]]
     if args.limit:
         keep = {(s, r) for s in splits for r in splits[s][: args.limit]}
         pairs = [p for p in pairs if p in keep]

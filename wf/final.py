@@ -10,7 +10,7 @@ import numpy as np
 import torch
 
 from .candidates import make_cfg
-from .data import PAIRS, FireDataset, jac, split_indices
+from .data import load_ext, PAIRS, FireDataset, jac, split_indices
 from .metrics import evaluate, evaluate_area, sweep, sweep_area
 from .train import _loader, build, norm_stats, run
 
@@ -55,14 +55,16 @@ def predict_tta(model, loader, device, dtype, tta: int = 8):
     areas = []
     for i, k in enumerate(ks):
         acc = []
-        for x, _, _, _ in loader:
+        for batch in loader:
+            x = batch[0]
+            ext = batch[4].to(device) if len(batch) > 4 else None
             x = x.to(device, non_blocking=True).float().to(memory_format=torch.channels_last)
             xk = _geo(x, k)
             if k:
                 xk = _vec(xk, k)
             xk = xk.contiguous(memory_format=torch.channels_last)
             with torch.autocast("cuda", dtype=dtype, enabled=device.type == "cuda"):
-                o = model(xk)
+                o = model(xk, ext) if ext is not None else model(xk)
             acc.append(_inv(torch.sigmoid(o["main"].float()), k).cpu().numpy()[:, 0])
             if i == 0 and "area" in o:
                 areas.append(o["area"].float().cpu().numpy())
@@ -112,7 +114,8 @@ def main() -> None:
     model = model.to(dev).to(memory_format=torch.channels_last)
     model.load_state_dict(ckpt["model"], strict=False)
 
-    ev_ds = FireDataset(root, "eval", None, aux=False, prep=prep, drop=drop)
+    ev_ds = FireDataset(root, "eval", None, aux=False, prep=prep, drop=drop,
+                        ext=load_ext(root, "eval") if cfg["model"].get("late") else None)
     tg, va = _targets(ev_ds)
     ld = _loader(ev_ds, 512, False, 4)
     prob, ar = predict_tta(model, ld, dev, dtype, args.tta)
@@ -131,7 +134,8 @@ def main() -> None:
         np.save(out / "eval_area.npy", ar)
 
     if args.test:
-        te_ds = FireDataset(root, "test", None, aux=False, prep=prep, drop=drop)
+        te_ds = FireDataset(root, "test", None, aux=False, prep=prep, drop=drop,
+                            ext=load_ext(root, "test") if cfg["model"].get("late") else None)
         ttg, tva = _targets(te_ds)
         tprob, tar = predict_tta(model, _loader(te_ds, 512, False, 4), dev, dtype, args.tta)
         res["test"] = (evaluate_area(tprob, np.expm1(tar) * thr, ttg, tva, full=True) if tar is not None

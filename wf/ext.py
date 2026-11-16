@@ -32,6 +32,16 @@ COLS = ["tmax", "tmin", "prcp", "prcp_3d", "tmax_anom7", "dtr", "nearest_km", "m
 
 
 def _station_coords(path: Path) -> tuple[list[str], np.ndarray]:
+    if path.suffix in (".parquet", ".csv"):
+        d = pd.read_parquet(path) if path.suffix == ".parquet" else pd.read_csv(path)
+        names = {c.lower(): c for c in d.columns}
+        lat = next((names[k] for k in ("latitude", "lat") if k in names), None)
+        lon = next((names[k] for k in ("longitude", "lon", "lng") if k in names), None)
+        station = next((names[k] for k in ("station_id", "id", "station") if k in names), None)
+        if not all((lat, lon, station)):
+            raise ValueError(f"Station coordinate schema not recognized: {list(d.columns)}")
+        d = d.dropna(subset=[lat, lon, station])
+        return d[station].astype(str).tolist(), d[[lat, lon]].to_numpy(np.float64)
     ids, ll = [], []
     for line in path.read_text().splitlines():
         ids.append(line[:11])
@@ -64,24 +74,29 @@ def _rolling(a: np.ndarray, w: int, how: str) -> np.ndarray:
 
 def build(meta: pd.DataFrame, mats: dict[str, np.ndarray], ll: np.ndarray,
           days: pd.DatetimeIndex) -> np.ndarray:
+    if len(ll) == 0:
+        raise ValueError("No reporting weather stations overlap the crops")
     tmax, tmin, prcp = mats["tmax"], mats["tmin"], mats["prcp"]
     fields = np.stack([tmax, tmin, prcp, _rolling(prcp, 3, "sum"),
                        tmax - _rolling(tmax, 7, "mean"), tmax - tmin])
-    # degrees are only comparable once longitude is shrunk by cos(lat)
-    scale = np.array([1.0, float(np.cos(np.deg2rad(np.abs(meta.lat).mean())))])
-    tree = cKDTree(ll * scale)
-    dist, nb = tree.query(np.c_[meta.lat, meta.lon] * scale, k=min(K, len(ll)))
+    def xyz(coords):
+        lat, lon = np.deg2rad(coords).T
+        return np.c_[np.cos(lat) * np.cos(lon), np.cos(lat) * np.sin(lon), np.sin(lat)]
+    tree = cKDTree(xyz(ll))
+    dist, nb = tree.query(xyz(np.c_[meta.lat, meta.lon]), k=min(32, len(ll)))
     # query collapses to 1-D when there is a single station
     dist, nb = dist.reshape(len(meta), -1), nb.reshape(len(meta), -1)
-    day = (pd.to_datetime(meta.date) - days[0]).dt.days.to_numpy()
+    day = (pd.to_datetime(meta.date.astype(str)) - days[0]).dt.days.to_numpy()
     out = np.full((len(meta), len(COLS)), np.nan, np.float32)
     for i in range(len(meta)):
         t = day[i]
         if not (0 <= t < len(days)):
             continue
         v = fields[:, nb[i], t]                    # (features, k)
-        d = dist[i] * 111.0                        # ~km per degree
-        w = np.where(np.isfinite(v) & (d <= MAX_KM), 1.0 / np.maximum(d, 0.5), 0.0)
+        d = 2 * 6371.0 * np.arcsin(np.clip(dist[i] / 2, 0, 1))
+        available = np.isfinite(v) & (d <= MAX_KM)
+        available &= np.cumsum(available, axis=1) <= K
+        w = np.where(available, 1.0 / np.maximum(d, 0.5), 0.0)
         s = w.sum(1)
         good = s > 0
         out[i, :6][good] = (np.nan_to_num(v) * w).sum(1)[good] / s[good]
@@ -93,7 +108,11 @@ def build(meta: pd.DataFrame, mats: dict[str, np.ndarray], ll: np.ndarray,
 
 
 def scale_split(raw: dict[str, np.ndarray], out: Path) -> None:
-    mean, std = raw["train"].mean(0), np.maximum(raw["train"].std(0), 1e-6)
+    train = np.where(np.isfinite(raw["train"]), raw["train"], np.nan)
+    count = np.isfinite(train).sum(0)
+    mean = np.nansum(train, axis=0) / np.maximum(count, 1)
+    var = np.nansum((train - mean) ** 2, axis=0) / np.maximum(count, 1)
+    std = np.maximum(np.sqrt(var), 1e-6)
     for split, a in raw.items():
         z = np.nan_to_num((a - mean) / std, nan=0.0)
         d = out / split
@@ -102,6 +121,9 @@ def scale_split(raw: dict[str, np.ndarray], out: Path) -> None:
         print(f"{split}: ext {z.shape} missing={float(np.mean(a[:, 7] > 0)):.1%}", flush=True)
     (out / "ext_norm.json").write_text(json.dumps({"cols": COLS, "mean": mean.tolist(),
                                                    "std": std.tolist()}, indent=1))
+    audit = {f"{s}_complete_fraction": float(np.mean(a[:, 7] == 0)) for s, a in raw.items()}
+    audit['feature_observed_fraction'] = {s: np.isfinite(a[:, :6]).mean(0).tolist() for s, a in raw.items()}
+    (out / 'weather_audit.json').write_text(json.dumps(audit, indent=2))
 
 
 def main() -> None:
@@ -111,10 +133,11 @@ def main() -> None:
     ap.add_argument("--out", default="data/tsf")
     ap.add_argument("--year0", type=int, default=2017)
     ap.add_argument("--year1", type=int, default=2021)
+    ap.add_argument("--splits", default="train,eval,test")
     args = ap.parse_args()
 
     out, ghcn = Path(args.out), Path(args.ghcn)
-    splits = {s: pd.read_csv(out / s / "meta.csv") for s in ("train", "eval", "test")}
+    splits = {s: pd.read_csv(out / s / "meta.csv") for s in args.splits.split(',')}
     meta = pd.concat(splits.values(), ignore_index=True)
     ids_all, ll_all = _station_coords(Path(args.stations))
     # only stations near our crops and present in the core network
@@ -123,6 +146,8 @@ def main() -> None:
     days = pd.date_range(f"{args.year0}-01-01", f"{args.year1}-12-31", freq="D")
     ids = [i for i, k in zip(ids_all, near) if k]
     ll = ll_all[near]
+    if not any(ghcn.glob("ghcnd_wide_*.parquet")):
+        raise FileNotFoundError(f"No ghcnd_wide_*.parquet under {ghcn}")
     mats = _grid(ghcn, range(args.year0, args.year1 + 1), ids,
                  {s: i for i, s in enumerate(ids)}, days)
     keep = np.isfinite(mats["tmax"]).any(1) | np.isfinite(mats["prcp"]).any(1)

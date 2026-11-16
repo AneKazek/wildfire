@@ -1,0 +1,182 @@
+{
+  "source": "User-supplied Kaggle log excerpt; not independently downloaded",
+  "notebook": "https://www.kaggle.com/code/anekazek/wildfire-deep-architecture-search",
+  "selected_run": "final_td4_w24_tversky_recall_seed0",
+  "selection_split": "tuning",
+  "eval_rows": 1248,
+  "confirmation_evaluated_in_excerpt": false,
+  "test_evaluated": false,
+  "complete_leaderboard": false,
+  "rows": [
+    {
+      "name": "final_td4_w24_tversky_recall_seed0",
+      "budget": "full",
+      "train_rows": 21719,
+      "best_epoch": 20,
+      "threshold": 0.35,
+      "macro_dice": 0.449657022564986,
+      "micro_dice": 0.4577007946173417,
+      "iou": 0.2967652405058343
+    },
+    {
+      "name": "final_td4_w24_tversky_precision_seed0",
+      "budget": "full",
+      "train_rows": 21719,
+      "best_epoch": 24,
+      "threshold": 0.2,
+      "macro_dice": 0.43311991768643027,
+      "micro_dice": 0.41825714632412847,
+      "iou": 0.2644280297218508
+    },
+    {
+      "name": "loss_td4_w24_tversky_recall",
+      "budget": "screen",
+      "train_rows": 12000,
+      "best_epoch": 10,
+      "threshold": 0.85,
+      "macro_dice": 0.4341072645961725,
+      "micro_dice": 0.44477203524267517,
+      "iou": 0.28598510657058346
+    },
+    {
+      "name": "loss_td4_w24_tversky_precision",
+      "budget": "screen",
+      "train_rows": 12000,
+      "best_epoch": 10,
+      "threshold": 0.2,
+      "macro_dice": 0.4209530338407228,
+      "micro_dice": 0.3920422047623348,
+      "iou": 0.2438137405866357
+    },
+    {
+      "name": "loss_td4_w24_bce_pw1",
+      "budget": "screen",
+      "train_rows": 12000,
+      "best_epoch": 15,
+      "threshold": 0.55,
+      "macro_dice": 0.41591999698940757,
+      "micro_dice": 0.4071600968040896,
+      "iou": 0.25561897086276797
+    },
+    {
+      "name": "screen_td4_weather_scalar",
+      "budget": "screen",
+      "train_rows": 12000,
+      "best_epoch": 17,
+      "threshold": 0.65,
+      "macro_dice": 0.3983172306091551,
+      "micro_dice": 0.42747748001192815,
+      "iou": 0.2718418811675719
+    },
+    {
+      "name": "screen_td4_weather_spatial",
+      "budget": "screen",
+      "train_rows": 12000,
+      "best_epoch": 17,
+      "threshold": 0.5,
+      "macro_dice": 0.3766480159053596,
+      "micro_dice": 0.4056989309037431,
+      "iou": 0.2544682047624273
+    },
+    {
+      "name": "screen_unet",
+      "budget": "screen",
+      "train_rows": 12000,
+      "best_epoch": 17,
+      "threshold": 0.75,
+      "macro_dice": 0.37007872387002066,
+      "micro_dice": 0.43025620412963544,
+      "iou": 0.27409326621423236
+    },
+    {
+      "name": "screen_hrnet",
+      "budget": "screen",
+      "train_rows": 12000,
+      "best_epoch": 17,
+      "threshold": 0.75,
+      "macro_dice": 0.36883240573386145,
+      "micro_dice": 0.3922905580992451,
+      "iou": 0.24400588058713507
+    },
+    {
+      "name": "screen_unet_effb1",
+      "budget": "screen",
+      "train_rows": 12000,
+      "best_epoch": 12,
+      "threshold": 0.75,
+      "macro_dice": 0.3649122019208993,
+      "micro_dice": 0.42302181549269735,
+      "iou": 0.2682483623734228
+    },
+    {
+      "name": "screen_unet_r34",
+      "budget": "screen",
+      "train_rows": 12000,
+      "best_epoch": 17,
+      "threshold": 0.75,
+      "macro_dice": 0.36131126070949093,
+      "micro_dice": 0.4189067854596057,
+      "iou": 0.2649475575552179
+    },
+    {
+      "name": "screen_unetpp_r18",
+      "budget": "screen",
+      "train_rows": 12000,
+      "best_epoch": 16,
+      "threshold": 0.7,
+      "macro_dice": 0.3611337566249583,
+      "micro_dice": 0.4159618483258474,
+      "iou": 0.2625958521808467
+    },
+    {
+      "name": "screen_dual_fuel_weather",
+      "budget": "screen",
+      "train_rows": 12000,
+      "best_epoch": 17,
+      "threshold": 0.75,
+      "macro_dice": 0.34684989749521905,
+      "micro_dice": 0.4161831299524326,
+      "iou": 0.26277225468619564
+    },
+    {
+      "name": "screen_unet_convnext",
+      "budget": "screen",
+      "train_rows": 12000,
+      "best_epoch": 16,
+      "threshold": 0.7,
+      "macro_dice": 0.33898559776095594,
+      "micro_dice": 0.3836870578443612,
+      "iou": 0.23738414006179195
+    },
+    {
+      "name": "screen_unet_mitb1",
+      "budget": "screen",
+      "train_rows": 12000,
+      "best_epoch": 16,
+      "threshold": 0.75,
+      "macro_dice": 0.329426224180343,
+      "micro_dice": 0.3780578077969958,
+      "iou": 0.23308956978515896
+    },
+    {
+      "name": "screen_unet_mitb0",
+      "budget": "screen",
+      "train_rows": 12000,
+      "best_epoch": 16,
+      "threshold": 0.8,
+      "macro_dice": 0.3271592035213572,
+      "micro_dice": 0.3911610741364135,
+      "iou": 0.24313252734511473
+    },
+    {
+      "name": "loss_td4_w24_lovasz",
+      "budget": "screen",
+      "train_rows": 12000,
+      "best_epoch": 13,
+      "threshold": 0.5,
+      "macro_dice": 0.23883696277972524,
+      "micro_dice": 0.2983982269970622,
+      "iou": 0.17536313826851366
+    }
+  ]
+}

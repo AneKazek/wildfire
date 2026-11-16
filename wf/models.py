@@ -434,6 +434,9 @@ class Net(nn.Module):
         heads = cfg.pop("heads", ["main"])
         cin = cfg.pop("cin", 23)
         late = int(cfg.pop("late", 0))
+        self.late_mode = cfg.pop("late_mode", "scalar")
+        if self.late_mode not in ("scalar", "spatial"):
+            raise ValueError("late_mode must be scalar or spatial")
         self.trunk_name = trunk
         if trunk == "fullres":
             self.trunk = FullRes(cin, cfg.pop("width", 96), cfg.pop("blocks", [[1, 2], [2, 2], [4, 2], [8, 2], [16, 2]]),
@@ -476,7 +479,8 @@ class Net(nn.Module):
         # the external data has to earn its weight.
         self.late = None
         if late:
-            self.late = nn.Sequential(nn.Linear(late, 32), nn.SiLU(), nn.Linear(32, 1))
+            self.late = nn.Sequential(nn.Linear(late, 32), nn.SiLU(),
+                                      nn.Linear(32, c + 1 if self.late_mode == "spatial" else 1))
             nn.init.zeros_(self.late[-1].weight)
             nn.init.zeros_(self.late[-1].bias)
 
@@ -492,8 +496,18 @@ class Net(nn.Module):
             # The head decides on the finer lattice; average-pool its logits so
             # the loss and the metrics stay on the 64x64 label grid.
             out = {k: (F.avg_pool2d(v, up) if k == "main" else v) for k, v in out.items()}
-        if self.late is not None and ext is not None:
-            out["main"] = out["main"] + self.late(ext.float()).view(-1, 1, 1, 1)
+        if self.late is not None:
+            if ext is None:
+                raise ValueError("Late fusion requires external features")
+            z = self.late(ext.float())
+            if self.late_mode == "spatial":
+                correction = (f * z[:, :-1, None, None]).sum(1, keepdim=True) / f.shape[1] ** 0.5
+                correction = correction + z[:, -1, None, None, None]
+                if up > 1:
+                    correction = F.avg_pool2d(correction, up)
+            else:
+                correction = z.view(-1, 1, 1, 1)
+            out["main"] = out["main"] + correction
         for i, a in enumerate(aux):
             out[f"aux{i}"] = self.aux[f"aux{i}"](a)
         if self.area_head is not None:
@@ -547,6 +561,13 @@ class SMPNet(nn.Module):
 
 def build_model(mcfg: dict, mean, std) -> nn.Module:
     mcfg = dict(mcfg)
+    if mcfg.get('trunk') == 'wildfire_td4':
+        from .primary import WildfireTD4
+        mcfg.pop('trunk')
+        cin = mcfg.pop('cin', 33)
+        if cin != 33 or mcfg:
+            raise ValueError('WildfireTD4 is a fixed 33-channel architecture; use historical trunks for ablations')
+        return WildfireTD4(mean, std)
     if "smp" in mcfg:
         smp = mcfg.pop("smp")
         heads = mcfg.pop("heads", ["main"])
