@@ -1,5 +1,53 @@
 # WildfireTD4 — next-day wildfire progression
 
+```mermaid
+flowchart TD
+    X["TS-SatFire patch<br/>33 channels · 64 × 64"]
+    N["Normalize with<br/>training mean / std"]
+    X --> N
+
+    subgraph ENC["Three parallel encoders"]
+        H["Hadamard"]
+        D["DCT"]
+        C["Convolution"]
+    end
+    N --> H
+    N --> D
+    N --> C
+
+    G["Four pixel-gated fusions<br/>one at each encoder scale"]
+    H --> G
+    D --> G
+    C --> G
+
+    B["Bottleneck<br/>192 channels · 8 × 8"]
+    U3["Decoder stage 3<br/>96 channels · 16 × 16"]
+    U2["Decoder stage 2<br/>48 channels · 32 × 32"]
+    U1["Decoder stage 1<br/>24 channels · 64 × 64"]
+    G -->|"F4"| B
+    B -->|"Conv + bilinear upsample"| U3
+    U3 -->|"Conv + bilinear upsample"| U2
+    U2 -->|"Conv + bilinear upsample"| U1
+    G -->|"F3 skip"| U3
+    G -->|"F2 skip"| U2
+    G -->|"F1 skip"| U1
+
+    HEAD["Segmentation head<br/>3 × 3 Conv-BN-GELU<br/>1 × 1 Conv → 1 logit channel"]
+    P["Sigmoid<br/>next-day progression probability"]
+    MASK["Binary prediction · 64 × 64<br/>probability > 0.35"]
+    U1 --> HEAD --> P --> MASK
+```
+
+Each encoder produces four feature maps: **24 × 64 × 64**, **48 × 32 × 32**,
+**96 × 16 × 16**, and **192 × 8 × 8** (channels × height × width). Each gate
+projects the three branch features with 1 × 1 convolutions and uses a pixel-wise
+softmax to form their weighted sum. Decoder stages concatenate the corresponding
+fused skip with the upsampled feature, then apply a Conv-BN-GELU block.
+
+**Training:** logits → focal Tversky recall loss against the progression target,
+with alpha **0.4**, beta **0.6**, gamma **1.33**. **Inference:** sigmoid → threshold;
+**0.35** is the selected checkpoint's threshold. **5,973,133 parameters**.
+
 The primary model is **WildfireTD4**: a custom four-scale U-Net with parallel
 Hadamard, DCT and convolution encoders, pixel-gated fusion, and focal Tversky
 recall loss. It takes 33-channel TS-SatFire patches and needs no external
