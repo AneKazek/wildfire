@@ -147,14 +147,14 @@ def _by_date(d: Path) -> dict[str, Path]:
     return {p.name.split("_")[0]: p for p in d.glob("*.tif")}
 
 
-def convert(roi_dir: Path, per_day: int, rng) -> tuple[list, list, list]:
+def convert(roi_dir: Path, per_day: int, rng) -> tuple[list, list, list, list]:
     days = sorted((roi_dir / "VIIRS_Day").glob("*.tif"))
     nights = _by_date(roi_dir / "VIIRS_Night")
     preds = _by_date(roi_dir / "FirePred")
     days = [p for p in days if p.name.split("_")[0] in preds]
     if len(days) < 3:
-        return [], [], []
-    xs, fires, prevs = [], [], []
+        return [], [], [], []
+    xs, fires, prevs, meta = [], [], [], []
     cum = None
     cur = None
     for i in range(len(days) - 1):
@@ -185,8 +185,12 @@ def convert(roi_dir: Path, per_day: int, rng) -> tuple[list, list, list]:
             xs.append(_channels(day0, night, aux, prev, box))
             fires.append(np.where(new[sl], 7, 5).astype(np.uint8))
             prevs.append(np.where(prev[sl], 7, 5).astype(np.uint8))
+            # crop centre in lon/lat, for the external (late-fusion) join
+            lat = b.top - (r0 + SIZE / 2) * (b.top - b.bottom) / shape[0]
+            lon = b.left + (c0 + SIZE / 2) * (b.right - b.left) / shape[1]
+            meta.append((key, round(lat, 4), round(lon, 4)))
         cum = nxt
-    return xs, fires, prevs
+    return xs, fires, prevs, meta
 
 
 def _split_ids(roi_csv: Path, cache: Path) -> dict[str, list[str]]:
@@ -202,14 +206,14 @@ def _split_ids(roi_csv: Path, cache: Path) -> dict[str, list[str]]:
     return {"train": train, "eval": sorted(VAL), "test": test}
 
 
-def _job(spec: tuple[str, int, int]) -> tuple[str, list, list, list]:
+def _job(spec: tuple[str, int, int]) -> tuple[str, list, list, list, list]:
     roi, per_day, seed = spec
     try:
-        xs, fires, prevs = convert(Path(roi), per_day, np.random.default_rng(seed))
-        return Path(roi).name, xs, fires, prevs
+        xs, fires, prevs, meta = convert(Path(roi), per_day, np.random.default_rng(seed))
+        return Path(roi).name, xs, fires, prevs, meta
     except Exception as exc:  # a truncated tif should cost one ROI, not the run
         print("fail", roi, repr(exc)[:140], flush=True)
-        return Path(roi).name, [], [], []
+        return Path(roi).name, [], [], [], []
 
 
 def main() -> None:
@@ -246,9 +250,16 @@ def main() -> None:
     print(f"{len(pairs)} ROIs, {len(pairs) - len(todo)} missing on disk", flush=True)
     jobs = [(str(cache / "ts-satfire" / r), args.per_day, int(rng.integers(1 << 30))) for _, r in todo]
     with Pool(args.workers) as pool:
-        for i, ((split, roi), (_, xs, fires, prevs)) in enumerate(zip(todo, pool.imap(_job, jobs, 1))):
+        for i, ((split, roi), (_, xs, fires, prevs, meta)) in enumerate(zip(todo, pool.imap(_job, jobs, 1))):
             if xs:
                 _flush(args.out, split, xs, fires, prevs)
+                d = Path(args.out) / split
+                new = not (d / "meta.csv").exists()
+                with (d / "meta.csv").open("a", newline="") as f:
+                    w = csv.writer(f)
+                    if new:
+                        w.writerow(["roi", "date", "lat", "lon"])
+                    w.writerows((roi, *m) for m in meta)
             if not args.keep:
                 shutil.rmtree(cache / "ts-satfire" / roi, ignore_errors=True)
             if (i + 1) % 10 == 0 or i + 1 == len(todo):

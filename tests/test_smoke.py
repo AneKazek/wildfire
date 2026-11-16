@@ -281,3 +281,34 @@ def test_tsf_patch_layout_and_centres():
     r0, c0 = boxes[0]
     assert 0 <= r0 <= h - 64 and 0 <= c0 <= w - 64
     assert new[r0:r0 + 64, c0:c0 + 64].any()
+
+
+def test_late_fusion_starts_as_the_plain_trunk():
+    """Zero-init means the external stream must begin as a no-op, then be able to move it."""
+    cfg = {"trunk": "td", "branches": ["ht", "dct"], "width": 4, "sizes": (16, 8, 4), "late": 3, "cin": 23}
+    net = Net(cfg, [0.0] * 23, [1.0] * 23)
+    x = torch.randn(2, 23, 16, 16)
+    e = torch.randn(2, 3)
+    with torch.no_grad():
+        assert torch.allclose(net(x)["main"], net(x, e)["main"], atol=1e-6)
+        net.late[-1].bias.fill_(0.7)
+        assert torch.allclose(net(x, e)["main"] - net(x)["main"],
+                              torch.full((2, 1, 16, 16), 0.7), atol=1e-5)
+
+
+def test_ext_interpolates_nearest_stations_and_flags_far_rows():
+    """Late-fusion features: IDW of the two bracketing stations, missing when far away."""
+    import pandas as pd
+    from wf.ext import build
+
+    days = pd.date_range("2017-01-01", periods=5, freq="D")
+    mats = {"tmax": np.array([[10.0] * 5, [20.0] * 5], np.float32),
+            "tmin": np.array([[0.0] * 5, [10.0] * 5], np.float32),
+            "prcp": np.zeros((2, 5), np.float32)}
+    ll = np.array([[40.0, -120.0], [41.0, -120.0]])
+    meta = pd.DataFrame({"date": ["2017-01-03", "2017-01-03"], "lat": [40.5, 45.0],
+                         "lon": [-120.0, -120.0]})
+    f = build(meta, mats, ll, days)
+    assert abs(f[0, 0] - 15.0) < 1e-3, f[0]          # midway -> mean of 10 and 20
+    assert abs(f[0, 5] - 10.0) < 1e-3, f[0]          # tmax - tmin
+    assert f[0, 7] == 0.0 and f[1, 7] == 1.0         # far row is flagged missing

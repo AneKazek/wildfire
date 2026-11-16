@@ -160,6 +160,9 @@ CANDIDATES: dict[str, dict] = {
     # --- round 8 (TS-SatFire): the 4-scale trunk wins, combine it ---
     "td_4s_attn": td(branches=["ht", "dct", "conv"], fusion="gate", width=16,
                      sizes=(64, 32, 16, 8), attn=True),
+    # late fusion: GHCN station weather (wf.ext, 8 columns) shifts the final logits
+    "td_4s_late": td(branches=["ht", "dct", "conv"], fusion="gate", width=16,
+                     sizes=(64, 32, 16, 8), late=8),
 
     # --- round 5: explicit area head + top-k decode (the measured bottleneck) ---
     "td_area": {**td(branches=["ht", "dct", "conv"], fusion="gate", width=16, area=32),

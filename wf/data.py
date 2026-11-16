@@ -133,6 +133,7 @@ class FireDataset(Dataset):
         drop: str = "",
         pf_aug: str = "",
         soft: float = 0.0,
+        ext: np.ndarray | None = None,
     ) -> None:
         base = Path(root) / split
         x, fire, prev = cache(root, split)
@@ -152,6 +153,7 @@ class FireDataset(Dataset):
         self.drop = drop
         self.pf_aug = pf_aug
         self.soft = soft
+        self.ext = ext
         self.rng = np.random.default_rng(seed)
 
     def __len__(self) -> int:
@@ -187,4 +189,14 @@ class FireDataset(Dataset):
             extra = extras(x, self.prep)
             keep = [i for i in range(x.shape[0]) if i not in DROPS.get(self.drop, [])]
             x = np.concatenate([x[keep], extra], 0)
-        return torch.from_numpy(x), torch.from_numpy(y), torch.from_numpy(valid), torch.from_numpy(aux)
+        if self.ext is None:
+            return (torch.from_numpy(x), torch.from_numpy(y), torch.from_numpy(valid),
+                    torch.from_numpy(aux))
+        return (torch.from_numpy(x), torch.from_numpy(y), torch.from_numpy(valid),
+                torch.from_numpy(aux), torch.from_numpy(self.ext[j]))
+
+
+def load_ext(root: str | Path, split: str) -> np.ndarray | None:
+    """Per-row external features written by `wf.ext`; None when the cache has none."""
+    p = Path(root) / split / "ext.npy"
+    return np.load(p).astype(np.float32) if p.exists() else None

@@ -13,7 +13,7 @@ import torch
 import torch.nn.functional as F
 from torch.utils.data import DataLoader, Subset
 
-from .data import CHANNELS, FireDataset, split_indices
+from .data import CHANNELS, FireDataset, load_ext, split_indices
 from .losses import make_loss, moment
 from .metrics import evaluate, evaluate_area, sweep, sweep_area
 from .models import build_model
@@ -82,10 +82,12 @@ def predict(model, loader, device, dtype):
     """Probabilities plus, when the model has one, the predicted log1p(area)."""
     model.eval()
     probs, tgts, valids, areas = [], [], [], []
-    for x, y, v, _ in loader:
+    for b in loader:
+        x, y, v = b[0], b[1], b[2]
+        e = b[4].to(device, non_blocking=True) if len(b) > 4 else None
         x = x.to(device, non_blocking=True).float().to(memory_format=torch.channels_last)
         with torch.autocast("cuda", dtype=dtype, enabled=device.type == "cuda"):
-            o = model(x)
+            o = model(x, e) if e is not None else model(x)
         probs.append(torch.sigmoid(o["main"].float()).cpu().numpy()[:, 0])
         if "area" in o:
             areas.append(o["area"].float().cpu().numpy())
@@ -132,10 +134,12 @@ def run(cfg: dict, run_name: str | None = None, out_dir: str | Path = "results/r
         in_mem = len(train_idx) * len(CHANNELS) * 64 * 64 * 2 <= 4e9
     tr_ds = FireDataset(root, "train", train_idx, augment=True, prev_dropout=d.get("prev_dropout", 0.2),
                         seed=rng, aux=bool(wb or wg), in_memory=in_mem, prep=prep, drop=drop,
-                        pf_aug=d.get("pf_aug", ""), soft=float(d.get("soft", 0.0)))
+                        pf_aug=d.get("pf_aug", ""), soft=float(d.get("soft", 0.0)),
+                        ext=load_ext(root, "train") if int(m.get("late", 0)) else None)
     ev_idx = split_indices(root, "eval", t.get("eval_n"), seed=0)
     ev_ds = FireDataset(root, "eval", ev_idx, augment=False, aux=False, in_memory=len(ev_idx) <= 30000,
-                        prep=prep, drop=drop)
+                        prep=prep, drop=drop,
+                        ext=load_ext(root, "eval") if int(m.get("late", 0)) else None)
     bs = int(t.get("batch_size", 256))
     tr_ld = _loader(tr_ds, bs, True, int(t.get("workers", 8)))
     ev_ld = _loader(ev_ds, 512, False, int(t.get("eval_workers", 4)))
@@ -175,7 +179,9 @@ def run(cfg: dict, run_name: str | None = None, out_dir: str | Path = "results/r
         it = iter(tr_ld)
         for _ in range(steps_per_epoch):
             t_wait = time.time()
-            x, y, v, aux = next(it)
+            b = next(it)
+            x, y, v, aux = b[0], b[1], b[2], b[3]
+            e = b[4].to(dev, non_blocking=True) if len(b) > 4 else None
             t_data += time.time() - t_wait
             x = x.to(dev, non_blocking=True).float().to(memory_format=torch.channels_last)
             y = y.to(dev, non_blocking=True).unsqueeze(1)
@@ -183,7 +189,7 @@ def run(cfg: dict, run_name: str | None = None, out_dir: str | Path = "results/r
             aux = aux.to(dev, non_blocking=True)
             opt.zero_grad(set_to_none=True)
             with torch.autocast("cuda", dtype=dtype, enabled=use_amp):
-                o = model(x)
+                o = model(x, e) if e is not None else model(x)
                 loss = criterion(o["main"].float(), y, v)
                 if wm:
                     loss = loss + wm * moment(o["main"].float(), y, v)
@@ -247,7 +253,8 @@ def run(cfg: dict, run_name: str | None = None, out_dir: str | Path = "results/r
     ckpt = out / "best.pt"
     if ckpt.exists():
         model.load_state_dict(torch.load(ckpt, map_location=dev)["model"], strict=False)
-    full_ds = FireDataset(root, "eval", None, aux=False, prep=prep, drop=drop)
+    full_ds = FireDataset(root, "eval", None, aux=False, prep=prep, drop=drop,
+                          ext=load_ext(root, "eval") if int(m.get("late", 0)) else None)
     prob, tg, va, ar = predict(model, _loader(full_ds, 512, False, 4), dev, dtype)
     if ar is not None:
         thr, rows = sweep_area(prob, np.expm1(ar), tg, va)

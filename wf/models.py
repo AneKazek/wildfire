@@ -433,6 +433,7 @@ class Net(nn.Module):
         trunk = cfg.pop("trunk", "fullres")
         heads = cfg.pop("heads", ["main"])
         cin = cfg.pop("cin", 23)
+        late = int(cfg.pop("late", 0))
         self.trunk_name = trunk
         if trunk == "fullres":
             self.trunk = FullRes(cin, cfg.pop("width", 96), cfg.pop("blocks", [[1, 2], [2, 2], [4, 2], [8, 2], [16, 2]]),
@@ -470,8 +471,16 @@ class Net(nn.Module):
             # from it, which puts the joint training in a useless basin.
             nn.init.zeros_(self.area_head[-1].weight)
             nn.init.constant_(self.area_head[-1].bias, 2.9)  # ~ln 17 px
+        # Late fusion: an external stream (GHCN station weather) shifts the final
+        # logit map per image. Zero-init, so the run starts as the plain trunk and
+        # the external data has to earn its weight.
+        self.late = None
+        if late:
+            self.late = nn.Sequential(nn.Linear(late, 32), nn.SiLU(), nn.Linear(32, 1))
+            nn.init.zeros_(self.late[-1].weight)
+            nn.init.zeros_(self.late[-1].bias)
 
-    def forward(self, x):
+    def forward(self, x, ext=None):
         x = (x - self.mean) / self.std
         f = self.trunk(x)
         aux = []
@@ -483,6 +492,8 @@ class Net(nn.Module):
             # The head decides on the finer lattice; average-pool its logits so
             # the loss and the metrics stay on the 64x64 label grid.
             out = {k: (F.avg_pool2d(v, up) if k == "main" else v) for k, v in out.items()}
+        if self.late is not None and ext is not None:
+            out["main"] = out["main"] + self.late(ext.float()).view(-1, 1, 1, 1)
         for i, a in enumerate(aux):
             out[f"aux{i}"] = self.aux[f"aux{i}"](a)
         if self.area_head is not None:
