@@ -43,7 +43,7 @@ reference checkpoint. Keep the existing tuning/confirmation event partition.
 - [wf/primary.py](wf/primary.py): fixed model, training recipe and checkpoint loader.
 - [wf/__main__.py](wf/__main__.py): train/evaluate/predict commands.
 - [docs/MODEL.md](docs/MODEL.md): architecture and input/evaluation contract.
-- [docs/comparisons/README.md](docs/comparisons/README.md): historical models and results.
+- [docs/comparisons/README.md](docs/comparisons/README.md): Markdown tables of all available results, historical experiments, validation runs, and missing-result statuses.
 - [docs/comparisons/available_results.json](docs/comparisons/available_results.json): available Kaggle comparison numbers.
 
 This is the existing positive-progression-centered 64x64 patch task. Its scores
